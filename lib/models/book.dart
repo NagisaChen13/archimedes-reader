@@ -119,11 +119,13 @@ class ChapterItem {
         'index': index,
         'title': title,
         'wordCount': wordCount,
+        'content': content,
       };
 
   factory ChapterItem.fromMap(Map<String, dynamic> map) => ChapterItem(
         index: map['index'] ?? 0,
         title: map['title'] ?? '',
         wordCount: map['wordCount'] ?? 0,
+        content: map['content'] as String?,
       );
 }
