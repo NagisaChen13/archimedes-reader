@@ -1,0 +1,59 @@
+name: archimedes_reader
+description: "Project Archimedes: New-generation Ebook Reader merging Archival Glass Aesthetics, Moon+ Custom Reader Core, Reeden AI Knowledge Graphs, and Quantified Analytics."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.2.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # UI & Design System
+  cupertino_icons: ^1.0.8
+  characters: ^1.3.0
+  google_fonts: ^6.2.1
+
+  # Local Persistence & Data
+  shared_preferences: ^2.3.2
+  path_provider: ^2.1.4
+  path: ^1.9.0
+
+  # Audio & Acoustics
+  audioplayers: ^6.1.0
+
+  # AI & Network
+  http: ^1.2.2
+  crypto: ^3.0.5
+
+  # Document formats & Text
+  archive: ^3.6.1
+  xml: ^6.5.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/audio/
+    - assets/fonts/
+
+  fonts:
+    - family: SourceHanSerifCN
+      fonts:
+        - asset: assets/fonts/SourceHanSerifCN-Regular.otf
+          weight: 400
+        - asset: assets/fonts/SourceHanSerifCN-Bold.otf
+          weight: 700
+
+  shaders:
+    - shaders/continuous_blur.frag
+    - shaders/analytic_glass.frag
