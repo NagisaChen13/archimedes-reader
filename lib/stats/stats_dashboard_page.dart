@@ -1,14 +1,19 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import '../../models/book.dart';
+import '../../models/reading_session.dart';
+import '../../services/storage_service.dart';
 import '../../theme/archival_theme.dart';
 import '../../ui/widgets/archive_code.dart';
 import '../../ui/widgets/archive_registration.dart';
-import '../../services/storage_service.dart';
-import 'reading_calendar_heatmap.dart';
 import 'external_paper_timer.dart';
+import 'reading_calendar_heatmap.dart';
 
 enum StatsGranularity { day, week, month, year }
 
-/// Comprehensive Quantified Reading Analytics Dashboard strictly matching the Archival HTML matrix design.
+/// Comprehensive Quantified Reading Analytics Dashboard.
+/// Real data persistence, zero default baseline for non-book metrics,
+/// 12-week heatmap footprint, and purely Chinese clean labels.
 class StatsDashboardPage extends StatefulWidget {
   final VoidCallback? onToggleTheme;
 
@@ -21,66 +26,119 @@ class StatsDashboardPage extends StatefulWidget {
 class _StatsDashboardPageState extends State<StatsDashboardPage> {
   StatsGranularity _granularity = StatsGranularity.day;
   int _currentGoalMinutes = 60;
-  final int _currentReadMinutesToday = 49;
 
   @override
   Widget build(BuildContext context) {
-    final totalBooksCount = StorageService().getBooks().length;
+    final books = StorageService().getBooks();
+    final sessions = StorageService().getSessions();
+    final totalBooksCount = books.length;
+    final readBooksCount = books.where((b) => b.currentProgress >= 0.95).length;
+
+    // Calculate real session stats
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
+    final todaySessions = sessions.where((s) {
+      return s.startTime.year == now.year &&
+          s.startTime.month == now.month &&
+          s.startTime.day == now.day;
+    }).toList();
+
+    final todaySeconds = todaySessions.fold<int>(0, (sum, s) => sum + s.durationSeconds);
+    final todayMinutes = todaySeconds ~/ 60;
+
+    final totalSeconds = sessions.fold<int>(0, (sum, s) => sum + s.durationSeconds);
+    final totalMinutes = totalSeconds ~/ 60;
+    final totalHours = (totalSeconds / 3600.0);
+
+    final totalWords = sessions.fold<int>(0, (sum, s) => sum + s.wordsRead);
+    final totalPages = sessions.fold<int>(0, (sum, s) => sum + s.pagesRead);
+
+    // Reading speed calculations (0 if no data)
+    final wpm = totalMinutes > 0 ? (totalWords / totalMinutes).round() : 0;
+    final secPerPage = totalPages > 0 ? (totalSeconds / totalPages).toStringAsFixed(1) : '0';
+    final pagesPerHour = totalHours > 0 ? (totalPages / totalHours).toStringAsFixed(1) : '0';
+
+    // Day minutes map for 12-week heatmap
+    final dayMinutesMap = <DateTime, int>{};
+    for (final s in sessions) {
+      final d = DateTime(s.startTime.year, s.startTime.month, s.startTime.day);
+      dayMinutesMap[d] = (dayMinutesMap[d] ?? 0) + (s.durationSeconds ~/ 60);
+    }
+
+    // Calculate real consecutive days streak
+    int streakDays = 0;
+    DateTime checkDate = today;
+    while (dayMinutesMap[checkDate] != null && dayMinutesMap[checkDate]! > 0) {
+      streakDays++;
+      checkDate = checkDate.subtract(const Duration(days: 1));
+    }
+    if (streakDays == 0) {
+      // Check if yesterday was active
+      final yesterday = today.subtract(const Duration(days: 1));
+      checkDate = yesterday;
+      while (dayMinutesMap[checkDate] != null && dayMinutesMap[checkDate]! > 0) {
+        streakDays++;
+        checkDate = checkDate.subtract(const Duration(days: 1));
+      }
+    }
 
     return Scaffold(
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      // No redundant top AppBar: The dashboard directly renders its archival masthead inside the body!
+      backgroundColor: Colors.transparent,
       body: SafeArea(
-        child: SingleChildScrollView(
-          physics: const BouncingScrollPhysics(),
-          padding: const EdgeInsets.symmetric(horizontal: 18.0, vertical: 14.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 1. Archival Masthead with Day/Night Switcher and Grain Tabs
-              _buildArchivalMasthead(context),
-              const SizedBox(height: 16),
+        child: ListView(
+          padding: const EdgeInsets.only(left: 18, right: 18, top: 12, bottom: 90),
+          children: [
+            // 1. Archival Masthead with Day/Night Switcher and Grain Tabs
+            _buildArchivalMasthead(context),
+            const SizedBox(height: 16),
 
-              // 2. Daily Goal Configuration & Realtime Streak Card
-              _buildGoalStreakCard(context),
-              const SizedBox(height: 16),
+            // 2. Goal & Streak Card with Interactive Slider
+            _buildGoalStreakCard(context, todayMinutes, streakDays),
+            const SizedBox(height: 16),
 
-              // 3. 6-Grid Core Specific Metrics (LIB-TOTAL, LIB-DONE, SPEED-CPM, PACE-PAGE, FREQ-TURN, TOTAL-HOURS)
-              _buildCoreMetricsGrid(context, totalBooksCount),
-              const SizedBox(height: 16),
+            // 3. 6-Grid Core Specific Metrics
+            _buildCoreMetricsGrid(
+              context,
+              totalBooks: totalBooksCount,
+              readBooks: readBooksCount,
+              wpm: wpm,
+              secPerPage: secPerPage,
+              pagesPerHour: pagesPerHour,
+              totalHours: totalHours,
+            ),
+            const SizedBox(height: 16),
 
-              // 4. Dynamic Timeline Chart Responsive to [日 / 周 / 月 / 年]
-              _buildDynamicChartSection(context),
-              const SizedBox(height: 16),
+            // 4. Dynamic Timeline Chart (Day/Week/Month/Year)
+            _buildDynamicChartSection(context, sessions),
+            const SizedBox(height: 16),
 
-              // 5. 16-Week Footprint Calendar Heatmap (CAL-112D)
-              const ReadingCalendarHeatmap(dayMinutesMap: {}),
-              const SizedBox(height: 16),
+            // 5. 12-Week Heatmap Footprint
+            ReadingCalendarHeatmap(dayMinutesMap: dayMinutesMap),
+            const SizedBox(height: 16),
 
-              // 6. External Paper Book Timer Banner
-              _buildExternalTimerBanner(context),
-              const SizedBox(height: 20),
+            // 6. External Paper Book Timer Banner
+            _buildExternalTimerBanner(context),
+            const SizedBox(height: 16),
 
-              // 7. Footer Archival Stamp
-              _buildFooterStamp(context),
-              const SizedBox(height: 80),
-            ],
-          ),
+            // 7. Footer Stamp
+            _buildFooterStamp(context),
+          ],
         ),
       ),
     );
   }
 
   // ==========================================
-  // 1. MASTHEAD & GRAIN TABS
+  // 1. ARCHIVAL MASTHEAD
   // ==========================================
 
   Widget _buildArchivalMasthead(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final scheme = Theme.of(context).colorScheme;
 
     return Container(
-      padding: const EdgeInsets.only(bottom: 12.0),
+      padding: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
         border: Border(bottom: BorderSide(color: scheme.outline, width: ArchivalTheme.hairlineThickness)),
       ),
@@ -89,19 +147,20 @@ class _StatsDashboardPageState extends State<StatsDashboardPage> {
         children: [
           Row(
             children: [
-              // Inverted Black Stamp "ARC"
               Container(
-                width: 32,
-                height: 36,
-                color: scheme.onSurface,
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: scheme.onSurface,
+                  borderRadius: BorderRadius.circular(4),
+                ),
                 alignment: Alignment.center,
                 child: Text(
-                  'ARC',
+                  '阅',
                   style: TextStyle(
                     color: scheme.surface,
                     fontWeight: FontWeight.w900,
-                    fontSize: 11,
-                    letterSpacing: -0.5,
+                    fontSize: 14,
                   ),
                 ),
               ),
@@ -111,26 +170,25 @@ class _StatsDashboardPageState extends State<StatsDashboardPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '量化阅读档案中心',
+                      '阅读数据统计中心',
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.w800,
                         color: scheme.onSurface,
-                        letterSpacing: -0.5,
                       ),
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'ARCHIVAL RECONSTRUCTION · MULTI-DIMENSIONAL AUDIT',
-                      style: ArchivalTheme.codeStyle(
-                        fontSize: 8.5,
+                      '多维阅读量化分析与足迹追踪',
+                      style: TextStyle(
+                        fontSize: 11,
                         color: scheme.onSurfaceVariant,
                       ),
                     ),
                   ],
                 ),
               ),
-              // Day/Night Mode Switcher (Moved Down here!)
+              // Day/Night Mode Switcher
               if (widget.onToggleTheme != null)
                 IconButton(
                   icon: Icon(
@@ -186,7 +244,6 @@ class _StatsDashboardPageState extends State<StatsDashboardPage> {
             label,
             style: TextStyle(
               fontSize: 12,
-              fontFamily: 'monospace',
               fontWeight: isSelected ? FontWeight.w800 : FontWeight.w500,
               color: isSelected ? scheme.surface : scheme.onSurfaceVariant,
             ),
@@ -197,13 +254,13 @@ class _StatsDashboardPageState extends State<StatsDashboardPage> {
   }
 
   // ==========================================
-  // 2. DAILY GOAL & STREAK CARD WITH SLIDER
+  // 2. DAILY GOAL & STREAK CARD
   // ==========================================
 
-  Widget _buildGoalStreakCard(BuildContext context) {
+  Widget _buildGoalStreakCard(BuildContext context, int todayMinutes, int streakDays) {
     final scheme = Theme.of(context).colorScheme;
-    final pct = ((_currentReadMinutesToday / _currentGoalMinutes) * 100).round().clamp(0, 100);
-    final remaining = _currentGoalMinutes - _currentReadMinutesToday;
+    final pct = ((todayMinutes / _currentGoalMinutes) * 100).round().clamp(0, 100);
+    final remaining = _currentGoalMinutes - todayMinutes;
 
     return ArchiveRegistration(
       inset: 2.0,
@@ -236,12 +293,12 @@ class _StatsDashboardPageState extends State<StatsDashboardPage> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
-                          '$_currentReadMinutesToday',
+                          '$todayMinutes',
                           style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18, height: 1.1),
                         ),
                         Text(
-                          '/ ${_currentGoalMinutes}m',
-                          style: TextStyle(fontSize: 9.5, color: scheme.onSurfaceVariant, fontFamily: 'monospace'),
+                          '/ ${_currentGoalMinutes}分',
+                          style: TextStyle(fontSize: 9.5, color: scheme.onSurfaceVariant),
                         ),
                       ],
                     ),
@@ -255,33 +312,26 @@ class _StatsDashboardPageState extends State<StatsDashboardPage> {
                       Row(
                         children: [
                           Text(
-                            '今日阅读目标达成：$pct%',
+                            '今日目标完成度：$pct%',
                             style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
                           ),
                           const Spacer(),
-                          const ArchiveCode('STREAK 19D', fontSize: 8),
+                          ArchiveCode('连续 $streakDays 天', fontSize: 8),
                         ],
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        remaining > 0
-                            ? '连续保持阅读心流 19 天 · 今日还差 $remaining 分钟即可达成每日勋章'
-                            : '🎉 恭喜！今日已达成设定的 $_currentGoalMinutes 分钟阅读目标，心流勋章已点亮！',
-                        style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant, height: 1.3),
+                        todayMinutes == 0
+                            ? '今日尚未开始阅读 · 设定目标 ${_currentGoalMinutes} 分钟'
+                            : (remaining > 0
+                                ? '连续阅读 $streakDays 天 · 今日还差 $remaining 分钟达成目标'
+                                : '🎉 今日已达成设定的 $_currentGoalMinutes 分钟阅读目标！'),
+                        style: TextStyle(fontSize: 11.5, color: scheme.onSurfaceVariant, height: 1.3),
                       ),
                       const SizedBox(height: 6),
-                      Row(
-                        children: [
-                          Text(
-                            _getGranularityTag(),
-                            style: ArchivalTheme.codeStyle(fontSize: 8.5, color: scheme.onSurfaceVariant),
-                          ),
-                          Text(' • ', style: TextStyle(color: scheme.onSurfaceVariant)),
-                          Text(
-                            '外挂纸书计时: 15m',
-                            style: ArchivalTheme.codeStyle(fontSize: 8.5, color: scheme.onSurfaceVariant),
-                          ),
-                        ],
+                      Text(
+                        _getGranularityTag(),
+                        style: TextStyle(fontSize: 10, color: scheme.onSurfaceVariant),
                       ),
                     ],
                   ),
@@ -295,7 +345,7 @@ class _StatsDashboardPageState extends State<StatsDashboardPage> {
             // In-Card Interactive Goal Slider
             Row(
               children: [
-                const Text('设定每日目标时长', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                const Text('设定每日阅读目标', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold)),
                 const Spacer(),
                 ArchiveCode('$_currentGoalMinutes 分钟', inverse: true, fontSize: 9),
               ],
@@ -314,9 +364,9 @@ class _StatsDashboardPageState extends State<StatsDashboardPage> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('15m (轻度)', style: ArchivalTheme.codeStyle(fontSize: 8.5, color: scheme.onSurfaceVariant)),
-                Text('60m (标准)', style: ArchivalTheme.codeStyle(fontSize: 8.5, color: scheme.onSurfaceVariant)),
-                Text('180m (重度)', style: ArchivalTheme.codeStyle(fontSize: 8.5, color: scheme.onSurfaceVariant)),
+                Text('15分钟 (轻度)', style: TextStyle(fontSize: 10, color: scheme.onSurfaceVariant)),
+                Text('60分钟 (标准)', style: TextStyle(fontSize: 10, color: scheme.onSurfaceVariant)),
+                Text('180分钟 (进阶)', style: TextStyle(fontSize: 10, color: scheme.onSurfaceVariant)),
               ],
             ),
           ],
@@ -326,25 +376,26 @@ class _StatsDashboardPageState extends State<StatsDashboardPage> {
   }
 
   String _getGranularityTag() => switch (_granularity) {
-        StatsGranularity.day => '统计粒度：今日 (24H 实况)',
-        StatsGranularity.week => '统计粒度：本周 (7D 实况)',
-        StatsGranularity.month => '统计粒度：当月 (30D 实况)',
-        StatsGranularity.year => '统计粒度：年度 (12M 大盘)',
+        StatsGranularity.day => '统计维度：今日阅读实况',
+        StatsGranularity.week => '统计维度：本周阅读实况',
+        StatsGranularity.month => '统计维度：当月阅读走势',
+        StatsGranularity.year => '统计维度：年度阅读概览',
       };
 
   // ==========================================
   // 3. 6-GRID CORE METRICS
   // ==========================================
 
-  Widget _buildCoreMetricsGrid(BuildContext context, int totalBooksCount) {
-    final (cpm, pace, turns) = switch (_granularity) {
-      StatsGranularity.day => ('584 字/分', '42.5 秒/页', '84.7 页/小时'),
-      StatsGranularity.week => ('572 字/分', '44.0 秒/页', '81.8 页/小时'),
-      StatsGranularity.month => ('568 字/分', '43.2 秒/页', '83.3 页/小时'),
-      StatsGranularity.year => ('584 字/分', '42.5 秒/页', '84.7 页/小时'),
-    };
-
-    final displayTotalBooks = totalBooksCount > 3 ? totalBooksCount : 128;
+  Widget _buildCoreMetricsGrid(
+    BuildContext context, {
+    required int totalBooks,
+    required int readBooks,
+    required int wpm,
+    required String secPerPage,
+    required String pagesPerHour,
+    required double totalHours,
+  }) {
+    final completionPct = totalBooks > 0 ? (readBooks / totalBooks * 100).toStringAsFixed(1) : '0';
 
     return GridView.count(
       crossAxisCount: 2,
@@ -357,52 +408,46 @@ class _StatsDashboardPageState extends State<StatsDashboardPage> {
         // 1. 书籍总数
         _buildMetricItem(
           context,
-          label: '全库书籍总数',
-          code: 'LIB-TOTAL',
-          value: '$displayTotalBooks 本',
-          subtext: '本地导入 ${(displayTotalBooks * 0.75).toInt()} · 云端 ${(displayTotalBooks * 0.25).toInt()}',
-          badgeText: '100%',
+          label: '书籍总数',
+          value: '$totalBooks 本',
+          subtext: '书架导入共计 $totalBooks 本',
+          badgeText: '总计',
         ),
         // 2. 已读书籍
         _buildMetricItem(
           context,
-          label: '已读书籍档案',
-          code: 'LIB-DONE',
-          value: '${(displayTotalBooks * 0.328).toInt()} 本',
-          subtext: '完成比例: 32.8%',
-          badgeText: '${(displayTotalBooks * 0.328).toInt()}/$displayTotalBooks',
+          label: '已读书籍',
+          value: '$readBooks 本',
+          subtext: '完成度 $completionPct%',
+          badgeText: '$readBooks/$totalBooks',
         ),
         // 3. 每分钟字数
         _buildMetricItem(
           context,
           label: '每分钟阅读字数',
-          code: 'SPEED-CPM',
-          value: cpm,
-          subtext: '较上周平均速率 +24 字/分 ↑',
+          value: '$wpm 字/分',
+          subtext: wpm > 0 ? '基于真实阅读测算' : '暂无阅读数据',
         ),
         // 4. 每页阅读秒数
         _buildMetricItem(
           context,
           label: '每页阅读秒数',
-          code: 'PACE-PAGE',
-          value: pace,
-          subtext: '按标准 420 字/页版式测算',
+          value: '$secPerPage 秒/页',
+          subtext: secPerPage != '0' ? '翻页间隔时间测算' : '暂无阅读数据',
         ),
-        // 5. 每小时翻页频次
+        // 5. 每小时翻页
         _buildMetricItem(
           context,
-          label: '每小时翻页频次',
-          code: 'FREQ-TURN',
-          value: turns,
-          subtext: '心流状态稳定性: 极高 (96%)',
+          label: '每小时翻页',
+          value: '$pagesPerHour 页/时',
+          subtext: pagesPerHour != '0' ? '阅读专注度状态' : '暂无阅读数据',
         ),
-        // 6. 累计有效时长
+        // 6. 累计总时长
         _buildMetricItem(
           context,
-          label: '累计有效时长',
-          code: 'TOTAL-HOURS',
-          value: '168.5 小时',
-          subtext: '包含外挂实体书 34.0 小时',
+          label: '累计阅读时长',
+          value: '${totalHours.toStringAsFixed(1)} 小时',
+          subtext: totalHours > 0 ? '跨书本累计总阅读时长' : '暂无阅读数据',
         ),
       ],
     );
@@ -411,7 +456,6 @@ class _StatsDashboardPageState extends State<StatsDashboardPage> {
   Widget _buildMetricItem(
     BuildContext context, {
     required String label,
-    required String code,
     required String value,
     required String subtext,
     String? badgeText,
@@ -436,29 +480,20 @@ class _StatsDashboardPageState extends State<StatsDashboardPage> {
               children: [
                 Text(
                   label,
-                  style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant, fontWeight: FontWeight.w600),
+                  style: TextStyle(fontSize: 11.5, color: scheme.onSurfaceVariant, fontWeight: FontWeight.w600),
                 ),
-                ArchiveCode(code, fontSize: 8),
+                if (badgeText != null) ArchiveCode(badgeText, fontSize: 8),
               ],
             ),
             Text(
               value,
               style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900, letterSpacing: -0.5),
             ),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: Text(
-                    subtext,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 9.5, color: scheme.onSurfaceVariant),
-                  ),
-                ),
-                if (badgeText != null)
-                  ArchiveCode(badgeText, inverse: true, fontSize: 7.5),
-              ],
+            Text(
+              subtext,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 9.5, color: scheme.onSurfaceVariant),
             ),
           ],
         ),
@@ -470,14 +505,14 @@ class _StatsDashboardPageState extends State<StatsDashboardPage> {
   // 4. DYNAMIC CHART SECTION
   // ==========================================
 
-  Widget _buildDynamicChartSection(BuildContext context) {
+  Widget _buildDynamicChartSection(BuildContext context, List<ReadingSession> sessions) {
     final scheme = Theme.of(context).colorScheme;
 
-    final (title, code, meta) = switch (_granularity) {
-      StatsGranularity.day => ('日视图：今日 24 小时阅读逐时打点 (分钟)', 'TIMELINE-24H', '今日累计：49 分钟 · 峰值在 21:00'),
-      StatsGranularity.week => ('周视图：本周 7 天阅读时长对比 (小时)', 'TIMELINE-7D', '本周累计：8.5 小时 · 平均达成率 92%'),
-      StatsGranularity.month => ('月视图：10 月每日阅读走势 (分钟)', 'TIMELINE-30D', '当月累计阅读：28.4 小时 · 达成 19 天'),
-      StatsGranularity.year => ('年视图：2026 年度 12 个月阅读大盘 (小时)', 'TIMELINE-12M', '全年度累计：168.5 小时 · 读完 42 本书'),
+    final (title, meta) = switch (_granularity) {
+      StatsGranularity.day => ('日视图：今日 24 小时阅读分布', '按小时打点记录'),
+      StatsGranularity.week => ('周视图：本周 7 天阅读时长', '周一至周日分布'),
+      StatsGranularity.month => ('月视图：当月每日阅读走势', '每日阅读时长打点'),
+      StatsGranularity.year => ('年视图：年度 12 个月阅读大盘', '各月份阅读汇总'),
     };
 
     return ArchiveRegistration(
@@ -504,11 +539,9 @@ class _StatsDashboardPageState extends State<StatsDashboardPage> {
                     style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: scheme.onSurface),
                   ),
                 ),
-                ArchiveCode(code, fontSize: 8),
+                Text(meta, style: TextStyle(fontSize: 10, color: scheme.onSurfaceVariant)),
               ],
             ),
-            const SizedBox(height: 4),
-            Text(meta, style: ArchivalTheme.codeStyle(fontSize: 9.5, color: scheme.onSurfaceVariant)),
             const SizedBox(height: 12),
             Divider(color: scheme.outline.withValues(alpha: 0.4), height: 1),
             const SizedBox(height: 14),
@@ -516,11 +549,11 @@ class _StatsDashboardPageState extends State<StatsDashboardPage> {
             // Bar Chart Area
             SizedBox(
               height: 110,
-              child: _buildBarsForGranularity(context),
+              child: _buildBarsForGranularity(context, sessions),
             ),
             const SizedBox(height: 8),
 
-            // Axis labels
+            // Axis labels (Removed all (深夜), (清晨), etc.)
             _buildAxisLabelsForGranularity(context),
           ],
         ),
@@ -528,16 +561,28 @@ class _StatsDashboardPageState extends State<StatsDashboardPage> {
     );
   }
 
-  Widget _buildBarsForGranularity(BuildContext context) {
+  Widget _buildBarsForGranularity(BuildContext context, List<ReadingSession> sessions) {
     final scheme = Theme.of(context).colorScheme;
+    final now = DateTime.now();
 
     if (_granularity == StatsGranularity.day) {
-      final hourly = [0, 0, 0, 0, 0, 0, 5, 12, 0, 0, 0, 15, 0, 8, 0, 0, 0, 0, 0, 18, 25, 32, 15, 0];
+      // 24 hours of today
+      final hourly = List.filled(24, 0);
+      for (final s in sessions) {
+        if (s.startTime.year == now.year && s.startTime.month == now.month && s.startTime.day == now.day) {
+          final h = s.startTime.hour.clamp(0, 23);
+          hourly[h] += (s.durationSeconds ~/ 60);
+        }
+      }
+
+      final maxVal = hourly.fold<int>(0, math.max);
+      final divisor = maxVal > 0 ? maxVal.toDouble() : 1.0;
+
       return Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: List.generate(24, (i) {
           final val = hourly[i];
-          final heightRatio = (val / 35.0).clamp(0.04, 1.0);
+          final heightRatio = val > 0 ? (val / divisor).clamp(0.08, 1.0) : 0.04;
           return Expanded(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 1.0),
@@ -545,7 +590,7 @@ class _StatsDashboardPageState extends State<StatsDashboardPage> {
                 message: '$i:00 - $val 分钟',
                 child: Container(
                   height: 100 * heightRatio,
-                  color: val > 0 ? scheme.onSurface.withValues(alpha: 0.9) : scheme.onSurface.withValues(alpha: 0.1),
+                  color: val > 0 ? scheme.onSurface : scheme.onSurface.withValues(alpha: 0.1),
                 ),
               ),
             ),
@@ -553,24 +598,40 @@ class _StatsDashboardPageState extends State<StatsDashboardPage> {
         }),
       );
     } else if (_granularity == StatsGranularity.week) {
-      final weekData = [1.2, 1.5, 0.8, 1.8, 1.0, 2.4, 0.9];
+      // 7 days of this week (Monday to Sunday)
+      final weekDays = List.filled(7, 0.0);
+      final currentWeekday = now.weekday; // 1 = Monday
+      final monday = DateTime(now.year, now.month, now.day).subtract(Duration(days: currentWeekday - 1));
+
+      for (final s in sessions) {
+        final sessionDay = DateTime(s.startTime.year, s.startTime.month, s.startTime.day);
+        final diff = sessionDay.difference(monday).inDays;
+        if (diff >= 0 && diff < 7) {
+          weekDays[diff] += (s.durationSeconds / 3600.0);
+        }
+      }
+
+      final maxVal = weekDays.fold<double>(0.0, math.max);
+      final divisor = maxVal > 0 ? maxVal : 1.0;
       final days = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+
       return Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: List.generate(7, (i) {
-          final val = weekData[i];
-          final heightRatio = (val / 2.5).clamp(0.08, 1.0);
+          final val = weekDays[i];
+          final heightRatio = val > 0 ? (val / divisor).clamp(0.08, 1.0) : 0.04;
           return Expanded(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4.0),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  Text('${val}h', style: ArchivalTheme.codeStyle(fontSize: 8, color: scheme.onSurfaceVariant)),
+                  if (val > 0)
+                    Text('${val.toStringAsFixed(1)}h', style: TextStyle(fontSize: 8, color: scheme.onSurfaceVariant)),
                   const SizedBox(height: 3),
                   Container(
-                    height: 80 * heightRatio,
-                    color: scheme.onSurface.withValues(alpha: 0.88),
+                    height: 75 * heightRatio,
+                    color: val > 0 ? scheme.onSurface : scheme.onSurface.withValues(alpha: 0.1),
                   ),
                   const SizedBox(height: 4),
                   Text(days[i], style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
@@ -581,20 +642,33 @@ class _StatsDashboardPageState extends State<StatsDashboardPage> {
         }),
       );
     } else if (_granularity == StatsGranularity.month) {
+      // Days of this month
+      final daysInMonth = DateTime(now.year, now.month + 1, 0).day;
+      final monthDays = List.filled(daysInMonth, 0);
+
+      for (final s in sessions) {
+        if (s.startTime.year == now.year && s.startTime.month == now.month) {
+          final d = (s.startTime.day - 1).clamp(0, daysInMonth - 1);
+          monthDays[d] += (s.durationSeconds ~/ 60);
+        }
+      }
+
+      final maxVal = monthDays.fold<int>(0, math.max);
+      final divisor = maxVal > 0 ? maxVal.toDouble() : 1.0;
+
       return Row(
         crossAxisAlignment: CrossAxisAlignment.end,
-        children: List.generate(30, (i) {
-          final d = i + 1;
-          final val = d <= 20 ? (35 + ((d * 17) % 45)) : 0;
-          final heightRatio = (val / 90.0).clamp(0.05, 1.0);
+        children: List.generate(daysInMonth, (i) {
+          final val = monthDays[i];
+          final heightRatio = val > 0 ? (val / divisor).clamp(0.08, 1.0) : 0.04;
           return Expanded(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 0.8),
               child: Tooltip(
-                message: '10月$d日: $val 分钟',
+                message: '${now.month}月${i + 1}日: $val 分钟',
                 child: Container(
                   height: 100 * heightRatio,
-                  color: d <= 20 ? scheme.onSurface.withValues(alpha: 0.82) : scheme.onSurface.withValues(alpha: 0.12),
+                  color: val > 0 ? scheme.onSurface : scheme.onSurface.withValues(alpha: 0.1),
                 ),
               ),
             ),
@@ -602,13 +676,23 @@ class _StatsDashboardPageState extends State<StatsDashboardPage> {
         }),
       );
     } else {
-      // Year
-      final monthData = [12.0, 16.0, 18.0, 15.0, 22.0, 26.0, 24.0, 28.0, 32.0, 28.5, 0.0, 0.0];
+      // 12 months of this year
+      final monthHours = List.filled(12, 0.0);
+      for (final s in sessions) {
+        if (s.startTime.year == now.year) {
+          final m = (s.startTime.month - 1).clamp(0, 11);
+          monthHours[m] += (s.durationSeconds / 3600.0);
+        }
+      }
+
+      final maxVal = monthHours.fold<double>(0.0, math.max);
+      final divisor = maxVal > 0 ? maxVal : 1.0;
+
       return Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: List.generate(12, (i) {
-          final val = monthData[i];
-          final heightRatio = (val / 35.0).clamp(0.06, 1.0);
+          final val = monthHours[i];
+          final heightRatio = val > 0 ? (val / divisor).clamp(0.08, 1.0) : 0.04;
           return Expanded(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 2.0),
@@ -616,14 +700,14 @@ class _StatsDashboardPageState extends State<StatsDashboardPage> {
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   if (val > 0)
-                    Text('${val.toInt()}h', style: ArchivalTheme.codeStyle(fontSize: 7.5, color: scheme.onSurfaceVariant)),
+                    Text('${val.toInt()}h', style: TextStyle(fontSize: 7.5, color: scheme.onSurfaceVariant)),
                   const SizedBox(height: 2),
                   Container(
                     height: 75 * heightRatio,
-                    color: val > 0 ? scheme.onSurface.withValues(alpha: 0.88) : scheme.onSurface.withValues(alpha: 0.12),
+                    color: val > 0 ? scheme.onSurface : scheme.onSurface.withValues(alpha: 0.1),
                   ),
                   const SizedBox(height: 4),
-                  Text('${i + 1}月', style: ArchivalTheme.codeStyle(fontSize: 8)),
+                  Text('${i + 1}月', style: TextStyle(fontSize: 8.5, color: scheme.onSurfaceVariant)),
                 ],
               ),
             ),
@@ -635,43 +719,45 @@ class _StatsDashboardPageState extends State<StatsDashboardPage> {
 
   Widget _buildAxisLabelsForGranularity(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final style = ArchivalTheme.codeStyle(fontSize: 8.5, color: scheme.onSurfaceVariant);
+    final style = TextStyle(fontSize: 9, color: scheme.onSurfaceVariant);
 
     return switch (_granularity) {
       StatsGranularity.day => Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text('00:00 (深夜)', style: style),
-            Text('06:00 (清晨)', style: style),
-            Text('12:00 (正午)', style: style),
-            Text('18:00 (傍晚)', style: style),
-            Text('23:59 (深夜)', style: style),
+            Text('00:00', style: style),
+            Text('06:00', style: style),
+            Text('12:00', style: style),
+            Text('18:00', style: style),
+            Text('24:00', style: style),
           ],
         ),
       StatsGranularity.week => Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text('周一开局', style: style),
-            Text('周中稳健', style: style),
-            Text('周末爆发 (2.4h 峰值)', style: style),
+            Text('周一', style: style),
+            Text('周三', style: style),
+            Text('周五', style: style),
+            Text('周日', style: style),
           ],
         ),
       StatsGranularity.month => Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text('10月1日 (国庆周)', style: style),
-            Text('10月10日', style: style),
-            Text('10月20日 (今天)', style: style),
-            Text('10月31日', style: style),
+            Text('1日', style: style),
+            Text('10日', style: style),
+            Text('20日', style: style),
+            Text('月末', style: style),
           ],
         ),
       StatsGranularity.year => Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text('Q1 春季起步', style: style),
-            Text('Q2 夏季持续', style: style),
-            Text('Q3 攀上峰值 (32h)', style: style),
-            Text('Q4 收官冲刺', style: style),
+            Text('1月', style: style),
+            Text('4月', style: style),
+            Text('7月', style: style),
+            Text('10月', style: style),
+            Text('12月', style: style),
           ],
         ),
     };
@@ -713,7 +799,7 @@ class _StatsDashboardPageState extends State<StatsDashboardPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '开启外挂实体书计时器',
+                    '实体纸质书阅读计时器',
                     style: TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w700,
@@ -722,7 +808,7 @@ class _StatsDashboardPageState extends State<StatsDashboardPage> {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    '读纸质书或听播客的时长亦可无缝并入统计',
+                    '纸书阅读时长可实时计入量化大盘',
                     style: TextStyle(
                       fontSize: 11,
                       color: scheme.onSurfaceVariant,
@@ -751,11 +837,11 @@ class _StatsDashboardPageState extends State<StatsDashboardPage> {
         border: Border(top: BorderSide(color: scheme.outline, width: ArchivalTheme.hairlineThickness)),
       ),
       child: Text(
-        'PROJECT ARCHIMEDES',
-        style: ArchivalTheme.codeStyle(
-          fontSize: 9.0,
+        '阿基米德阅读分析中心',
+        style: TextStyle(
+          fontSize: 10.0,
           color: scheme.onSurfaceVariant,
-          letterSpacing: 2.0,
+          letterSpacing: 1.5,
         ),
       ),
     );

@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'models/book.dart';
 import 'services/book_importer.dart';
 import 'services/storage_service.dart';
-import 'services/font_service.dart';
 import 'theme/archival_theme.dart';
 import 'ui/widgets/archive_code.dart';
 import 'ui/widgets/archive_masthead.dart';
@@ -10,6 +9,7 @@ import 'ui/widgets/archive_registration.dart';
 import 'ui/widgets/liquid_glass_dock.dart';
 import 'reader/reader_view.dart';
 import 'reader/pdf_reader_view.dart';
+import 'reader/markdown_reader_view.dart';
 import 'stats/stats_dashboard_page.dart';
 
 void main() async {
@@ -467,6 +467,13 @@ class _MasterHomeScreenState extends State<MasterHomeScreen> {
       ).then((_) => _refreshBooks());
       return;
     }
+    if (book.format == 'MD') {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => MarkdownReaderView(book: book, filePath: book.filePath)),
+      ).then((_) => _refreshBooks());
+      return;
+    }
     Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => ReaderView(book: book)),
@@ -474,196 +481,64 @@ class _MasterHomeScreenState extends State<MasterHomeScreen> {
   }
 
   Widget _buildSettingsView(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final scheme = Theme.of(context).colorScheme;
+
     return ListView(
-      padding: const EdgeInsets.only(left: 20, right: 20, top: 20, bottom: 90),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
       children: [
-        const ArchiveSectionHeader(title: '视觉排版设置', code: 'CONF-VISUAL'),
-        const SizedBox(height: 12),
-        _buildSettingTile(
-          context,
-          title: '自定义本地字体管理',
-          subtitle: '支持导入外部 .ttf 与 .otf 字体文件并即时渲染',
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () async {
-            final name = await FontService().pickAndImportFont();
-            if (name != null && mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('已成功导入本地字体: $name')),
-              );
-            }
-          },
+        const Text(
+          '系统偏好设置',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
-        _buildSettingTile(
-          context,
-          title: 'E-Ink 墨水屏二值化黑白模式',
-          subtitle: '移除所有半色调与色彩，强制纯黑纯白超高对比度',
-          trailing: Switch(value: false, onChanged: (_) {}),
-        ),
-
-        const SizedBox(height: 20),
-        const ArchiveSectionHeader(title: '控制与手势设置', code: 'CONF-CTRL'),
-        const SizedBox(height: 12),
-        _buildSettingTile(
-          context,
-          title: '左边缘滑动调光',
-          subtitle: '沿屏幕左侧边缘上下滑动，无级调节屏幕背光亮度',
-          trailing: Switch(value: true, onChanged: (_) {}),
-        ),
-        _buildSettingTile(
-          context,
-          title: '翻页动画模式',
-          subtitle: '当前：平移动态滑动 (Slide)，支持覆盖与瞬翻',
-          trailing: const Icon(Icons.chevron_right),
-        ),
-
-        const SizedBox(height: 20),
-        const ArchiveSectionHeader(title: '阅读辅助与护眼健康', code: 'CONF-HEALTH'),
-        const SizedBox(height: 12),
-        _buildSettingTile(
-          context,
-          title: '长时阅读防疲劳定时提醒',
-          subtitle: '每连续阅读 45 分钟温和提醒远眺与眼保健操',
-          trailing: Switch(value: true, onChanged: (_) {}),
-        ),
-        _buildSettingTile(
-          context,
-          title: '定时自动翻页模式',
-          subtitle: '支持 5s ~ 60s 自由设定每页停留时长',
-          trailing: const Icon(Icons.chevron_right),
-        ),
-        _buildSettingTile(
-          context,
-          title: '阅读时保持屏幕常亮',
-          subtitle: '禁止系统在阅读沉浸过程中自动休眠锁屏',
-          trailing: Switch(value: true, onChanged: (_) {}),
-        ),
-
-        const SizedBox(height: 20),
-        const ArchiveSectionHeader(title: '云端漫游与备份', code: 'CONF-CLOUD'),
-        const SizedBox(height: 12),
-        _buildSettingTile(
-          context,
-          title: '云端同步与数据备份 (WebDAV / 百度网盘 / NAS)',
-          subtitle: '同步书签、批注、阅读历史与进度跨端漫游',
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => _showCloudSyncDialog(context),
-        ),
-
-        const SizedBox(height: 20),
-        const ArchiveSectionHeader(title: 'AI 知识引擎配置', code: 'CONF-AI'),
-        const SizedBox(height: 12),
-        _buildSettingTile(
-          context,
-          title: 'OpenAI 协议 AI 助手密钥配置',
-          subtitle: '已支持 DeepSeek、GPT-4o、Claude 3.5 上下文模型',
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => _showAiKeyDialog(context),
+        const SizedBox(height: 16),
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: scheme.surface,
+            borderRadius: BorderRadius.circular(ArchivalTheme.cornerRadius),
+            border: Border.all(color: scheme.outline, width: ArchivalTheme.hairlineThickness),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: isDark ? Colors.amber.withValues(alpha: 0.15) : Colors.indigo.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
+                  color: isDark ? Colors.amber : Colors.indigo,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '日间 / 夜间深色暗室',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      isDark ? '已启用：夜间低光深色模式' : '已启用：日间明亮高对比模式',
+                      style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+              ),
+              Switch(
+                value: isDark,
+                onChanged: (_) => widget.onToggleTheme(),
+              ),
+            ],
+          ),
         ),
       ],
-    );
-  }
-
-  void _showCloudSyncDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('云端同步与数据备份'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('支持多协议跨端同步进度与批注：'),
-            const SizedBox(height: 12),
-            ListTile(
-              dense: true,
-              leading: const Icon(Icons.cloud_sync_outlined),
-              title: const Text('WebDAV (坚果云 / NAS / Nextcloud)'),
-              subtitle: const Text('点击配置服务器 URL 及账号'),
-              onTap: () => Navigator.pop(ctx),
-            ),
-            ListTile(
-              dense: true,
-              leading: const Icon(Icons.folder_shared_outlined),
-              title: const Text('百度网盘开放授权'),
-              subtitle: const Text('自动备份书库及阅读档案'),
-              onTap: () => Navigator.pop(ctx),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('完成')),
-        ],
-      ),
-    );
-  }
-
-  void _showAiKeyDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('AI 助手 API 密钥'),
-        content: const Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              decoration: InputDecoration(
-                labelText: 'API Base URL',
-                hintText: 'https://api.openai.com/v1',
-              ),
-            ),
-            SizedBox(height: 12),
-            TextField(
-              obscureText: true,
-              decoration: InputDecoration(
-                labelText: 'API Key',
-                hintText: 'sk-...',
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
-          ElevatedButton(onPressed: () => Navigator.pop(ctx), child: const Text('保存')),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSettingTile(
-    BuildContext context, {
-    required String title,
-    required String subtitle,
-    required Widget trailing,
-    VoidCallback? onTap,
-  }) {
-    final scheme = Theme.of(context).colorScheme;
-    return GestureDetector(
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: scheme.surface,
-          borderRadius: BorderRadius.circular(ArchivalTheme.cornerRadius),
-          border: Border.all(color: scheme.outline, width: ArchivalTheme.hairlineThickness),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5)),
-                  const SizedBox(height: 2),
-                  Text(subtitle, style: TextStyle(fontSize: 11.5, color: scheme.onSurfaceVariant)),
-                ],
-              ),
-            ),
-            trailing,
-          ],
-        ),
-      ),
     );
   }
 }

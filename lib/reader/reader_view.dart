@@ -7,9 +7,7 @@ import '../ui/widgets/mini_status_bar.dart';
 import 'nine_grid_gesture.dart';
 import 'illustration_extractor.dart';
 import 'pagination_engine.dart';
-import '../ai/ai_reading_assistant.dart';
-import '../ai/character_graph_view.dart';
-import '../services/tts_service.dart';
+import 'character_graph_view.dart';
 import '../services/font_service.dart';
 
 /// Active Reading Theme Definition (8 Archival & Eye-care Themes)
@@ -31,7 +29,7 @@ enum ReaderThemePreset {
   const ReaderThemePreset(this.label, this.backgroundColor, this.textColor, this.secondaryColor);
 }
 
-/// Master Reader Viewport featuring on-demand chapter pagination, Moon+ gestures, real TTS, and font importing.
+/// Master Reader Viewport featuring on-demand chapter pagination, theme switching, and custom font support.
 class ReaderView extends StatefulWidget {
   final Book book;
 
@@ -75,9 +73,6 @@ class _ReaderViewState extends State<ReaderView> {
   Timer? _eyeRestTimer;
   int _readingMinutesElapsed = 0;
 
-  // TTS Engine
-  final TtsService _ttsService = TtsService();
-
   // Viewport tracking for instant on-demand pagination
   Size? _lastViewportSize;
 
@@ -85,7 +80,6 @@ class _ReaderViewState extends State<ReaderView> {
   void initState() {
     super.initState();
     _prepareChapters();
-    _initTts();
     _startEyeHealthTracker();
     FontService().init();
   }
@@ -96,7 +90,6 @@ class _ReaderViewState extends State<ReaderView> {
     _autoTurnTimer?.cancel();
     _eyeRestTimer?.cancel();
     _pageController.dispose();
-    _ttsService.stop();
     super.dispose();
   }
 
@@ -119,13 +112,6 @@ class _ReaderViewState extends State<ReaderView> {
 
     _allChapters = list;
     _currentChapterIndex = widget.book.currentChapterIndex.clamp(0, _allChapters.length - 1);
-  }
-
-  void _initTts() {
-    _ttsService.init();
-    _ttsService.onStateChanged = () {
-      if (mounted) setState(() {});
-    };
   }
 
   void _startEyeHealthTracker() {
@@ -582,24 +568,7 @@ class _ReaderViewState extends State<ReaderView> {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (_) => CharacterGraphPage(bookTitle: widget.book.title),
-                ),
-              );
-            },
-          ),
-          // AI Assistant button
-          IconButton(
-            icon: Icon(Icons.auto_awesome, color: _currentTheme.textColor),
-            tooltip: 'AI 阅读助手',
-            onPressed: () {
-              final contextSnippet = _slices.isNotEmpty ? _slices[_currentPageInChapter].content : '';
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => AiReadingAssistantPage(
-                    bookTitle: widget.book.title,
-                    currentContext: contextSnippet,
-                  ),
+                  builder: (_) => CharacterGraphPage(book: widget.book),
                 ),
               );
             },
@@ -677,19 +646,6 @@ class _ReaderViewState extends State<ReaderView> {
                 label: _autoTurnEnabled ? '停止翻页' : '自动翻页',
                 active: _autoTurnEnabled,
                 onTap: () => _toggleAutoTurn(!_autoTurnEnabled),
-              ),
-              _buildToolButton(
-                icon: _ttsService.isPlaying ? Icons.pause_circle_filled : Icons.volume_up_outlined,
-                label: _ttsService.isPlaying ? '暂停朗读' : '听书朗读',
-                active: _ttsService.isPlaying,
-                onTap: () {
-                  if (_ttsService.isPlaying) {
-                    _ttsService.stop();
-                  } else {
-                    final text = _slices.isNotEmpty ? _slices[_currentPageInChapter].content : '';
-                    _ttsService.startSpeaking(text: text);
-                  }
-                },
               ),
               _buildToolButton(
                 icon: Icons.tune,
@@ -831,9 +787,9 @@ class _ReaderViewState extends State<ReaderView> {
         return StatefulBuilder(
           builder: (modalContext, setModalState) {
             return DefaultTabController(
-              length: 5,
+              length: 3,
               child: Container(
-                height: 500,
+                height: 480,
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 child: Column(
                   children: [
@@ -847,19 +803,16 @@ class _ReaderViewState extends State<ReaderView> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    // Multi-Tab Bar mirroring Moon+ Reader
+                    // Multi-Tab Bar: 视觉排版, 主题色彩, 辅助护眼
                     TabBar(
-                      isScrollable: true,
+                      isScrollable: false,
                       labelColor: _currentTheme.textColor,
                       unselectedLabelColor: _currentTheme.secondaryColor,
                       indicatorColor: _currentTheme.textColor,
-                      tabAlignment: TabAlignment.start,
                       tabs: const [
                         Tab(text: '视觉排版'),
                         Tab(text: '主题色彩'),
-                        Tab(text: '控制手势'),
                         Tab(text: '辅助护眼'),
-                        Tab(text: '听书语音'),
                       ],
                     ),
                     Expanded(
@@ -867,9 +820,7 @@ class _ReaderViewState extends State<ReaderView> {
                         children: [
                           _buildTypographyTab(setModalState),
                           _buildThemeTab(setModalState),
-                          _buildControlGestureTab(setModalState),
                           _buildEyeHealthTab(setModalState),
-                          _buildTtsTab(setModalState),
                         ],
                       ),
                     ),
@@ -1090,50 +1041,6 @@ class _ReaderViewState extends State<ReaderView> {
     );
   }
 
-  Widget _buildControlGestureTab(StateSetter setModalState) {
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        Text('屏幕触控区域与手势', style: TextStyle(fontWeight: FontWeight.bold, color: _currentTheme.textColor)),
-        const SizedBox(height: 12),
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: _currentTheme.secondaryColor.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Column(
-            children: [
-              _buildGridRow('上一页', '呼出控制台', '下一页'),
-              const Divider(),
-              _buildGridRow('上一页', '呼出控制台', '下一页'),
-              const Divider(),
-              _buildGridRow('上一页', '呼出控制台', '下一页'),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        ListTile(
-          dense: true,
-          leading: const Icon(Icons.touch_app_outlined),
-          title: Text('左边缘垂直滑动调光', style: TextStyle(color: _currentTheme.textColor)),
-          subtitle: Text('沿屏幕最左侧上下滑动，可无级调节屏幕背光亮度', style: TextStyle(fontSize: 11, color: _currentTheme.secondaryColor)),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildGridRow(String c1, String c2, String c3) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceAround,
-      children: [
-        Text(c1, style: TextStyle(fontSize: 11, color: _currentTheme.textColor)),
-        Text(c2, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: _currentTheme.textColor)),
-        Text(c3, style: TextStyle(fontSize: 11, color: _currentTheme.textColor)),
-      ],
-    );
-  }
-
   Widget _buildEyeHealthTab(StateSetter setModalState) {
     return ListView(
       padding: const EdgeInsets.all(20),
@@ -1195,58 +1102,6 @@ class _ReaderViewState extends State<ReaderView> {
             ),
           ),
         ],
-      ],
-    );
-  }
-
-  Widget _buildTtsTab(StateSetter setModalState) {
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        Center(
-          child: Column(
-            children: [
-              IconButton(
-                iconSize: 56,
-                icon: Icon(
-                  _ttsService.isPlaying ? Icons.pause_circle_filled : Icons.play_circle_fill,
-                  color: _currentTheme.textColor,
-                ),
-                onPressed: () {
-                  if (_ttsService.isPlaying) {
-                    _ttsService.stop();
-                  } else {
-                    final text = _slices.isNotEmpty ? _slices[_currentPageInChapter].content : '';
-                    _ttsService.startSpeaking(text: text);
-                  }
-                  setModalState(() {});
-                },
-              ),
-              Text(
-                _ttsService.isPlaying ? '正在语音朗读当前页...' : '点击开始语音朗读',
-                style: TextStyle(fontWeight: FontWeight.bold, color: _currentTheme.textColor),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 20),
-        Text('朗读语速 (${_ttsService.speed.toStringAsFixed(1)}x)', style: TextStyle(fontWeight: FontWeight.bold, color: _currentTheme.textColor)),
-        Slider(
-          value: _ttsService.speed,
-          min: 0.5,
-          max: 2.0,
-          divisions: 6,
-          activeColor: _currentTheme.textColor,
-          onChanged: (val) {
-            setState(() => _ttsService.speed = val);
-            setModalState(() {});
-          },
-        ),
-        const SizedBox(height: 10),
-        Text(
-          '由系统底层原生语音引擎合成（支持 Android TextToSpeech 与 iOS AVSpeechSynthesizer 离线朗读）。',
-          style: TextStyle(fontSize: 11, color: _currentTheme.secondaryColor),
-        ),
       ],
     );
   }
