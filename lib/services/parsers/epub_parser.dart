@@ -32,8 +32,9 @@ class EpubBookParser {
       }
 
       // Collect illustrations
-      if (epubBook.Content?.Images != null) {
-        illustrations.addAll(epubBook.Content!.Images.keys);
+      final images = epubBook.Content?.Images;
+      if (images != null) {
+        illustrations.addAll(images.keys);
       }
 
       int chapterIndex = 0;
