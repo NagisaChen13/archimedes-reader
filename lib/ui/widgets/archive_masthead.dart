@@ -5,13 +5,13 @@ import 'archive_code.dart';
 /// Top bar masthead with high-contrast badge stamp (e.g., `[ARCH]`) and title.
 class ArchiveMasthead extends StatelessWidget implements PreferredSizeWidget {
   final String title;
-  final String code;
+  final String? code;
   final List<Widget>? actions;
 
   const ArchiveMasthead({
     super.key,
     required this.title,
-    required this.code,
+    this.code,
     this.actions,
   });
 
@@ -70,8 +70,10 @@ class ArchiveMasthead extends StatelessWidget implements PreferredSizeWidget {
                       letterSpacing: -0.3,
                     ),
                   ),
-                  const SizedBox(height: 2),
-                  ArchiveCode(code, fontSize: 9.5),
+                  if (code != null && code!.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    ArchiveCode(code!, fontSize: 9.5),
+                  ],
                 ],
               ),
             ),

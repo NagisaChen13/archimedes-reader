@@ -213,7 +213,6 @@ class _MasterHomeScreenState extends State<MasterHomeScreen> {
             children: [
               _buildBookshelfView(context),
               StatsDashboardPage(onToggleTheme: widget.onToggleTheme),
-              _buildSettingsView(context),
             ],
           ),
           Positioned(
@@ -226,7 +225,6 @@ class _MasterHomeScreenState extends State<MasterHomeScreen> {
               items: const [
                 DockItem(icon: Icons.book_outlined, label: '书库档案'),
                 DockItem(icon: Icons.analytics_outlined, label: '量化统计'),
-                DockItem(icon: Icons.tune_outlined, label: '工坊配置'),
               ],
             ),
           ),
@@ -238,16 +236,10 @@ class _MasterHomeScreenState extends State<MasterHomeScreen> {
   String _getTabTitle(int index) => switch (index) {
         0 => '典藏档案馆 · 藏书架',
         1 => '量化阅读中心',
-        2 => '工坊全局设置',
         _ => '阿基米德阅读器',
       };
 
-  String _getTabCode(int index) => switch (index) {
-        0 => 'SHELF-ROOT-01',
-        1 => 'STATS-HUB-01',
-        2 => 'CONFIG-SYS-01',
-        _ => 'ROOT',
-      };
+  String? _getTabCode(int index) => null;
 
   Widget _buildBookshelfView(BuildContext context) {
     if (_books.isEmpty) {
@@ -265,7 +257,7 @@ class _MasterHomeScreenState extends State<MasterHomeScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                '支持 TXT, EPUB, PDF, MOBI, DOCX, MD, XLSX, PPTX 等多种格式',
+                '支持 TXT, EPUB, PDF, MOBI, DOCX, MD 等电子书格式',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
               ),
@@ -441,14 +433,35 @@ class _MasterHomeScreenState extends State<MasterHomeScreen> {
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
                         ),
-                        const SizedBox(height: 2),
-                        Text(
-                          '${book.author} · ${(book.totalWords / 10000).toStringAsFixed(1)}万字',
-                          style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                '${book.author} · ${(book.totalWords / 10000).toStringAsFixed(1)}万字',
+                                style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                              ),
+                            ),
+                            Text(
+                              '已读 ${(book.currentProgress * 100).toStringAsFixed(0)}%',
+                              style: ArchivalTheme.codeStyle(fontSize: 10, color: scheme.onSurfaceVariant),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(2),
+                          child: LinearProgressIndicator(
+                            value: book.currentProgress.clamp(0.0, 1.0),
+                            backgroundColor: scheme.outline.withValues(alpha: 0.25),
+                            color: scheme.onSurface,
+                            minHeight: 2.5,
+                          ),
                         ),
                       ],
                     ),
                   ),
+                  const SizedBox(width: 8),
                   Icon(Icons.arrow_forward_ios_rounded, size: 14, color: scheme.onSurfaceVariant),
                 ],
               ),
@@ -478,67 +491,5 @@ class _MasterHomeScreenState extends State<MasterHomeScreen> {
       context,
       MaterialPageRoute(builder: (_) => ReaderView(book: book)),
     ).then((_) => _refreshBooks());
-  }
-
-  Widget _buildSettingsView(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final scheme = Theme.of(context).colorScheme;
-
-    return ListView(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-      children: [
-        const Text(
-          '系统偏好设置',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 16),
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: scheme.surface,
-            borderRadius: BorderRadius.circular(ArchivalTheme.cornerRadius),
-            border: Border.all(color: scheme.outline, width: ArchivalTheme.hairlineThickness),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: isDark ? Colors.amber.withValues(alpha: 0.15) : Colors.indigo.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(
-                  isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
-                  color: isDark ? Colors.amber : Colors.indigo,
-                  size: 24,
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      '日间 / 夜间深色暗室',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      isDark ? '已启用：夜间低光深色模式' : '已启用：日间明亮高对比模式',
-                      style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-                    ),
-                  ],
-                ),
-              ),
-              Switch(
-                value: isDark,
-                onChanged: (_) => widget.onToggleTheme(),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
   }
 }

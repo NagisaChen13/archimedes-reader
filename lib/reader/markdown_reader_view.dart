@@ -9,7 +9,6 @@ import '../services/storage_service.dart';
 import '../theme/archival_theme.dart';
 import '../ui/widgets/archive_code.dart';
 import '../ui/widgets/archive_masthead.dart';
-import 'character_graph_view.dart';
 
 /// Professional Markdown Reader View referencing top GitHub Flutter Markdown projects.
 /// Features GitHub Flavored Markdown (GFM), Table of Contents (TOC) Outline,
@@ -36,6 +35,7 @@ class _MarkdownReaderViewState extends State<MarkdownReaderView> {
   bool _isLoading = true;
   double _fontSize = 16.0;
   double _scrollProgress = 0.0;
+  double _initialProgress = 0.0;
   DateTime _sessionStart = DateTime.now();
 
   // Table of Contents entries: (headingText, level, approxLineIndex)
@@ -78,8 +78,23 @@ class _MarkdownReaderViewState extends State<MarkdownReaderView> {
   void initState() {
     super.initState();
     _sessionStart = DateTime.now();
+    _scrollProgress = widget.book.currentProgress.clamp(0.0, 1.0);
+    _initialProgress = _scrollProgress;
     _loadMarkdownContent();
     _scrollController.addListener(_onScroll);
+  }
+
+  int _calculateCurrentCpm() {
+    final durationSeconds = DateTime.now().difference(_sessionStart).inSeconds;
+    if (durationSeconds < 3) return 0;
+    final docWords = widget.book.totalWords > 0 ? widget.book.totalWords : _content.length;
+    final progressDelta = (_scrollProgress - _initialProgress).abs();
+    int words = (docWords * progressDelta).round();
+    if (words < 10) {
+      words = math.min(docWords, ((durationSeconds / 60) * 350).round());
+    }
+    final minutes = durationSeconds / 60.0;
+    return minutes > 0 ? (words / minutes).round() : 0;
   }
 
   @override
@@ -192,6 +207,13 @@ class _MarkdownReaderViewState extends State<MarkdownReaderView> {
 
     // Record quantified session if read for more than 5 seconds
     if (durationSeconds >= 5) {
+      final docWords = widget.book.totalWords > 0 ? widget.book.totalWords : _content.length;
+      final progressDelta = (_scrollProgress - _initialProgress).abs();
+      int words = (docWords * progressDelta).round();
+      if (words < 10) {
+        words = math.min(docWords, math.max(15, ((durationSeconds / 60) * 350).round()));
+      }
+      final pagesRead = math.max(1, (durationSeconds / 30).round());
       final session = ReadingSession(
         id: 'SES-${DateTime.now().millisecondsSinceEpoch}',
         bookId: widget.book.id,
@@ -199,8 +221,8 @@ class _MarkdownReaderViewState extends State<MarkdownReaderView> {
         startTime: _sessionStart,
         endTime: now,
         durationSeconds: durationSeconds,
-        pagesRead: math.max(1, (durationSeconds / 30).round()),
-        wordsRead: (durationSeconds * 5),
+        pagesRead: pagesRead,
+        wordsRead: words,
       );
       StorageService().logSession(session);
     }
@@ -352,15 +374,6 @@ class _MarkdownReaderViewState extends State<MarkdownReaderView> {
             tooltip: '文档大纲目录',
             onPressed: () => _scaffoldKey.currentState?.openDrawer(),
           ),
-          // Character Graph
-          IconButton(
-            icon: const Icon(Icons.hub_outlined),
-            tooltip: '角色拓扑图',
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => CharacterGraphPage(book: widget.book)),
-            ),
-          ),
           // Reader Settings
           IconButton(
             icon: const Icon(Icons.tune_outlined),
@@ -378,35 +391,48 @@ class _MarkdownReaderViewState extends State<MarkdownReaderView> {
               children: [
                 // Top Progress indicator
                 LinearProgressIndicator(
-                  value: _scrollProgress,
+                  value: _scrollProgress.clamp(0.0, 1.0),
                   backgroundColor: theme.codeBg,
                   color: theme.accent,
-                  minHeight: 2.0,
+                  minHeight: 2.5,
                 ),
 
-                // Markdown AST Render Body
+                // Markdown AST Render Body with Real-time Scroll Notification
                 Expanded(
-                  child: SelectionArea(
-                    child: Markdown(
-                      controller: _scrollController,
-                      data: _content,
-                      selectable: true,
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                      styleSheet: _buildMarkdownStyleSheet(theme),
-                      onTapLink: (text, href, title) {
-                        if (href != null && href.isNotEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('链接: $href')),
-                          );
+                  child: NotificationListener<ScrollNotification>(
+                    onNotification: (notification) {
+                      if (notification.metrics.maxScrollExtent > 0) {
+                        final progress = (notification.metrics.pixels / notification.metrics.maxScrollExtent).clamp(0.0, 1.0);
+                        if ((progress - _scrollProgress).abs() > 0.005) {
+                          setState(() {
+                            _scrollProgress = progress;
+                          });
                         }
-                      },
+                      }
+                      return false;
+                    },
+                    child: SelectionArea(
+                      child: Markdown(
+                        controller: _scrollController,
+                        data: _content,
+                        selectable: true,
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                        styleSheet: _buildMarkdownStyleSheet(theme),
+                        onTapLink: (text, href, title) {
+                          if (href != null && href.isNotEmpty) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('链接: $href')),
+                            );
+                          }
+                        },
+                      ),
                     ),
                   ),
                 ),
 
                 // Bottom Status Bar
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   decoration: BoxDecoration(
                     color: theme.bg,
                     border: Border(top: BorderSide(color: theme.codeBg, width: 0.8)),
@@ -415,17 +441,24 @@ class _MarkdownReaderViewState extends State<MarkdownReaderView> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
-                        '进度: ${(_scrollProgress * 100).toInt()}%',
+                        '阅读进度: ${(_scrollProgress * 100).toStringAsFixed(0)}%',
                         style: ArchivalTheme.codeStyle(
                           fontSize: 10,
-                          color: theme.text.withValues(alpha: 0.7),
+                          color: theme.text.withValues(alpha: 0.8),
                         ),
                       ),
                       Text(
-                        '字数: ${widget.book.totalWords}',
+                        '阅读速度: ${_calculateCurrentCpm() > 0 ? '${_calculateCurrentCpm()} 字/分' : '-- 字/分'}',
                         style: ArchivalTheme.codeStyle(
                           fontSize: 10,
-                          color: theme.text.withValues(alpha: 0.7),
+                          color: theme.text.withValues(alpha: 0.8),
+                        ),
+                      ),
+                      Text(
+                        '总字数: ${widget.book.totalWords > 0 ? widget.book.totalWords : _content.length}',
+                        style: ArchivalTheme.codeStyle(
+                          fontSize: 10,
+                          color: theme.text.withValues(alpha: 0.8),
                         ),
                       ),
                     ],

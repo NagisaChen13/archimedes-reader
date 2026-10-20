@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import '../models/book.dart';
 import '../theme/archival_theme.dart';
@@ -7,8 +8,9 @@ import '../ui/widgets/mini_status_bar.dart';
 import 'nine_grid_gesture.dart';
 import 'illustration_extractor.dart';
 import 'pagination_engine.dart';
-import 'character_graph_view.dart';
 import '../services/font_service.dart';
+import '../services/parsers/txt_parser.dart';
+import '../services/parsers/epub_parser.dart';
 
 /// Active Reading Theme Definition (8 Archival & Eye-care Themes)
 enum ReaderThemePreset {
@@ -82,6 +84,41 @@ class _ReaderViewState extends State<ReaderView> {
     _prepareChapters();
     _startEyeHealthTracker();
     FontService().init();
+    _checkAndReloadChaptersIfNeeded();
+  }
+
+  Future<void> _checkAndReloadChaptersIfNeeded() async {
+    final needsReload = _allChapters.isEmpty ||
+        (_allChapters.length == 1 && (_allChapters.first.content == null || _allChapters.first.content!.isEmpty));
+    if (needsReload && widget.book.filePath != null && widget.book.filePath!.isNotEmpty) {
+      final file = File(widget.book.filePath!);
+      if (await file.exists()) {
+        try {
+          final bytes = await file.readAsBytes();
+          Book? reloaded;
+          if (widget.book.format == 'EPUB') {
+            reloaded = await EpubBookParser.parse(bytes: bytes, fileName: widget.book.title);
+          } else if (widget.book.format == 'TXT') {
+            reloaded = await TxtBookParser.parse(bytes: bytes, fileName: widget.book.title);
+          }
+          if (reloaded != null && reloaded.volumes.isNotEmpty && reloaded.volumes.first.chapters.isNotEmpty) {
+            final list = <ChapterItem>[];
+            for (final v in reloaded.volumes) {
+              list.addAll(v.chapters);
+            }
+            if (mounted && list.isNotEmpty) {
+              setState(() {
+                _allChapters = list;
+                _currentChapterIndex = widget.book.currentChapterIndex.clamp(0, _allChapters.length - 1);
+              });
+              if (_lastViewportSize != null) {
+                _paginateCurrentChapter(_lastViewportSize!);
+              }
+            }
+          }
+        } catch (_) {}
+      }
+    }
   }
 
   @override
@@ -159,6 +196,74 @@ class _ReaderViewState extends State<ReaderView> {
         if (mounted) _nextPage();
       });
     }
+  }
+
+  void _showAutoTurnSpeedDialog() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: _currentTheme.backgroundColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheetState) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      '自动翻页速度设置',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: _currentTheme.textColor,
+                      ),
+                    ),
+                    IconButton(
+                      icon: Icon(Icons.close, color: _currentTheme.textColor),
+                      onPressed: () => Navigator.pop(ctx),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  '当前翻页间隔: $_autoTurnSeconds 秒',
+                  style: TextStyle(fontSize: 14, color: _currentTheme.textColor),
+                ),
+                const SizedBox(height: 12),
+                Slider(
+                  value: _autoTurnSeconds.toDouble(),
+                  min: 3,
+                  max: 60,
+                  divisions: 19,
+                  activeColor: _currentTheme.textColor,
+                  inactiveColor: _currentTheme.secondaryColor.withValues(alpha: 0.3),
+                  onChanged: (v) {
+                    setState(() => _autoTurnSeconds = v.round());
+                    setSheetState(() {});
+                    if (_autoTurnEnabled) _toggleAutoTurn(true);
+                  },
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('极速 (3s)', style: TextStyle(fontSize: 11, color: _currentTheme.secondaryColor)),
+                    Text('适中 (15s)', style: TextStyle(fontSize: 11, color: _currentTheme.secondaryColor)),
+                    Text('舒缓 (60s)', style: TextStyle(fontSize: 11, color: _currentTheme.secondaryColor)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   /// On-demand instant pagination for the current chapter only (< 3ms)
@@ -420,30 +525,80 @@ class _ReaderViewState extends State<ReaderView> {
                     ),
                   ),
 
-                // Auto Turn Floating Status Pill
+                // Auto Turn Floating Status Pill with Speed Adjustment
                 if (_autoTurnEnabled)
                   Positioned(
-                    top: 12,
+                    top: 14,
                     right: 16,
-                    child: GestureDetector(
-                      onTap: () => _toggleAutoTurn(false),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: _currentTheme.textColor.withValues(alpha: 0.85),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.play_arrow, size: 14, color: _currentTheme.backgroundColor),
-                            const SizedBox(width: 4),
-                            Text(
-                              '自动翻页 ${_autoTurnSeconds}s',
-                              style: TextStyle(fontSize: 10, color: _currentTheme.backgroundColor, fontWeight: FontWeight.bold),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: _currentTheme.textColor.withValues(alpha: 0.9),
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.2),
+                            blurRadius: 6,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.play_arrow, size: 14, color: _currentTheme.backgroundColor),
+                          const SizedBox(width: 4),
+                          // Speed decrement (faster)
+                          GestureDetector(
+                            onTap: () {
+                              final newSpeed = (_autoTurnSeconds - 2).clamp(3, 60);
+                              setState(() => _autoTurnSeconds = newSpeed);
+                              _toggleAutoTurn(true);
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                              child: Icon(Icons.remove, size: 13, color: _currentTheme.backgroundColor),
                             ),
-                          ],
-                        ),
+                          ),
+                          // Tap seconds to open slider modal
+                          GestureDetector(
+                            onTap: _showAutoTurnSpeedDialog,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 3.0),
+                              child: Text(
+                                '${_autoTurnSeconds}s',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: _currentTheme.backgroundColor,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ),
+                          // Speed increment (slower)
+                          GestureDetector(
+                            onTap: () {
+                              final newSpeed = (_autoTurnSeconds + 2).clamp(3, 60);
+                              setState(() => _autoTurnSeconds = newSpeed);
+                              _toggleAutoTurn(true);
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                              child: Icon(Icons.add, size: 13, color: _currentTheme.backgroundColor),
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Container(width: 1, height: 10, color: _currentTheme.backgroundColor.withValues(alpha: 0.4)),
+                          const SizedBox(width: 4),
+                          // Exit auto-turn
+                          GestureDetector(
+                            onTap: () => _toggleAutoTurn(false),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 2.0),
+                              child: Icon(Icons.close, size: 14, color: _currentTheme.backgroundColor),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -560,19 +715,6 @@ class _ReaderViewState extends State<ReaderView> {
               );
             },
           ),
-          // Character Graph button
-          IconButton(
-            icon: Icon(Icons.hub_outlined, color: _currentTheme.textColor),
-            tooltip: '全书角色关系图谱',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => CharacterGraphPage(book: widget.book),
-                ),
-              );
-            },
-          ),
         ],
       ),
     );
@@ -643,9 +785,15 @@ class _ReaderViewState extends State<ReaderView> {
               ),
               _buildToolButton(
                 icon: Icons.play_circle_outline,
-                label: _autoTurnEnabled ? '停止翻页' : '自动翻页',
+                label: _autoTurnEnabled ? '${_autoTurnSeconds}s翻页' : '自动翻页',
                 active: _autoTurnEnabled,
-                onTap: () => _toggleAutoTurn(!_autoTurnEnabled),
+                onTap: () {
+                  if (!_autoTurnEnabled) {
+                    _toggleAutoTurn(true);
+                  } else {
+                    _showAutoTurnSpeedDialog();
+                  }
+                },
               ),
               _buildToolButton(
                 icon: Icons.tune,
