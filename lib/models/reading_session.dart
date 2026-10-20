@@ -7,6 +7,7 @@ class ReadingSession {
   final DateTime endTime;
   final int durationSeconds;
   final int wordsRead;
+  final int pagesRead;
   final bool isExternalPaper; // true: logged via physical paper book stopwatch
   final String note;
 
@@ -18,6 +19,7 @@ class ReadingSession {
     required this.endTime,
     required this.durationSeconds,
     this.wordsRead = 0,
+    this.pagesRead = 0,
     this.isExternalPaper = false,
     this.note = '',
   });
@@ -35,6 +37,7 @@ class ReadingSession {
         'endTime': endTime.toIso8601String(),
         'durationSeconds': durationSeconds,
         'wordsRead': wordsRead,
+        'pagesRead': pagesRead,
         'isExternalPaper': isExternalPaper,
         'note': note,
       };
@@ -47,6 +50,7 @@ class ReadingSession {
         endTime: DateTime.tryParse(map['endTime'] ?? '') ?? DateTime.now(),
         durationSeconds: map['durationSeconds'] ?? 0,
         wordsRead: map['wordsRead'] ?? 0,
+        pagesRead: map['pagesRead'] ?? 0,
         isExternalPaper: map['isExternalPaper'] ?? false,
         note: map['note'] ?? '',
       );

@@ -192,12 +192,12 @@ class _MarkdownReaderViewState extends State<MarkdownReaderView> {
       final session = ReadingSession(
         id: 'SES-${DateTime.now().millisecondsSinceEpoch}',
         bookId: widget.book.id,
+        bookTitle: widget.book.title,
         startTime: _sessionStart,
         endTime: now,
         durationSeconds: durationSeconds,
         pagesRead: math.max(1, (durationSeconds / 30).round()),
         wordsRead: (durationSeconds * 5),
-        endProgress: _scrollProgress,
       );
       StorageService().recordSession(session);
     }
