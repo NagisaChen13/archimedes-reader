@@ -77,7 +77,7 @@ class ReadingCalendarHeatmap extends StatelessWidget {
                         final dayIdx = weekIndex * 7 + dayOfWeek;
                         if (dayIdx >= days.length) return const SizedBox(width: 12, height: 12);
                         final date = days[dayIdx];
-                        final minutes = dayMinutesMap[date] ?? _pseudoMinutes(dayIdx);
+                        final minutes = dayMinutesMap[date] ?? 0;
 
                         return Tooltip(
                           message: '${date.month}月${date.day}日: ${minutes == 0 ? "未阅读" : "$minutes 分钟"}',
@@ -127,14 +127,6 @@ class ReadingCalendarHeatmap extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  int _pseudoMinutes(int index) {
-    final seed = (index * 19 + 11) % 10;
-    if (seed > 3 && seed < 6) return 25;
-    if (seed >= 6 && seed < 8) return 55;
-    if (seed >= 8) return 90;
-    return 0;
   }
 
   Widget _buildLegendBox(Color color) {

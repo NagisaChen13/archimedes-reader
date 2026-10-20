@@ -7,6 +7,7 @@ class Book {
   final String author;
   final String format; // "EPUB", "TXT", "MOBI", "PDF"
   final String coverPath;
+  final String? filePath;
   final int totalWords;
   final double currentProgress; // 0.0 to 1.0
   final int currentChapterIndex;
@@ -21,6 +22,7 @@ class Book {
     required this.author,
     required this.format,
     required this.coverPath,
+    this.filePath,
     this.totalWords = 0,
     this.currentProgress = 0.0,
     this.currentChapterIndex = 0,
@@ -39,6 +41,7 @@ class Book {
       'author': author,
       'format': format,
       'coverPath': coverPath,
+      'filePath': filePath,
       'totalWords': totalWords,
       'currentProgress': currentProgress,
       'currentChapterIndex': currentChapterIndex,
@@ -56,6 +59,7 @@ class Book {
       author: map['author'] ?? '',
       format: map['format'] ?? 'TXT',
       coverPath: map['coverPath'] ?? '',
+      filePath: map['filePath'] as String?,
       totalWords: map['totalWords'] ?? 0,
       currentProgress: (map['currentProgress'] as num?)?.toDouble() ?? 0.0,
       currentChapterIndex: map['currentChapterIndex'] ?? 0,

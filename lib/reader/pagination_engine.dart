@@ -21,7 +21,7 @@ class PageSlice {
   });
 }
 
-/// Industrial-grade Physical Pagination Engine using precise Binary Search layout geometry.
+/// High-speed layout engine using localized binary search and selective paragraph indentation.
 class PaginationEngine {
   static List<PageSlice> paginateChapter({
     required String chapterText,
@@ -30,7 +30,6 @@ class PaginationEngine {
     required Size viewportSize,
     required EdgeInsets padding,
     required TextStyle textStyle,
-    double paragraphSpacing = 12.0,
     bool indentTwoChars = true,
   }) {
     if (chapterText.trim().isEmpty) {
@@ -64,10 +63,8 @@ class PaginationEngine {
             trimmed.startsWith('`') ||
             trimmed.startsWith('|') ||
             RegExp(r'^\d+\.').hasMatch(trimmed)) {
-          // Keep formatting intact for markdown syntax
           processedLines.add(rawLine);
         } else {
-          // Standard Chinese paragraph: add 2 full-width spaces
           processedLines.add('　　$trimmed');
         }
       }
@@ -81,29 +78,40 @@ class PaginationEngine {
     int currentOffset = 0;
     final totalLength = processedText.length;
 
-    while (currentOffset < totalLength) {
-      // 1. Check if all remaining text fits on the current page
-      final fullRemainingPainter = TextPainter(
-        text: TextSpan(text: processedText.substring(currentOffset, totalLength), style: textStyle),
-        textDirection: TextDirection.ltr,
-      )..layout(maxWidth: availableWidth);
+    // Fast character estimate for bounded search window
+    final approxCharWidth = (textStyle.fontSize ?? 18.0) * 1.05;
+    final approxLineHeight = approxCharWidth * (textStyle.height ?? 1.8);
+    final linesPerPage = (availableHeight / approxLineHeight).floor().clamp(4, 80);
+    final charsPerLine = (availableWidth / approxCharWidth).floor().clamp(8, 120);
+    final estimatedCharsPerPage = linesPerPage * charsPerLine;
 
-      if (fullRemainingPainter.size.height <= availableHeight) {
-        slices.add(PageSlice(
-          pageIndex: slices.length,
-          totalPagesInChapter: 0,
-          chapterIndex: chapterIndex,
-          chapterTitle: chapterTitle,
-          content: processedText.substring(currentOffset, totalLength),
-          startCharOffset: currentOffset,
-          endCharOffset: totalLength,
-        ));
-        break;
+    while (currentOffset < totalLength) {
+      final remainingLength = totalLength - currentOffset;
+
+      // Check if all remaining text fits on the page
+      if (remainingLength <= (estimatedCharsPerPage * 1.2).toInt()) {
+        final painter = TextPainter(
+          text: TextSpan(text: processedText.substring(currentOffset, totalLength), style: textStyle),
+          textDirection: TextDirection.ltr,
+        )..layout(maxWidth: availableWidth);
+
+        if (painter.size.height <= availableHeight) {
+          slices.add(PageSlice(
+            pageIndex: slices.length,
+            totalPagesInChapter: 0,
+            chapterIndex: chapterIndex,
+            chapterTitle: chapterTitle,
+            content: processedText.substring(currentOffset, totalLength),
+            startCharOffset: currentOffset,
+            endCharOffset: totalLength,
+          ));
+          break;
+        }
       }
 
-      // 2. High-precision Binary Search for the maximum character offset that fits availableHeight
-      int low = currentOffset + 1;
-      int high = totalLength;
+      // Fast localized binary search within estimated window
+      int low = (currentOffset + (estimatedCharsPerPage * 0.4).toInt()).clamp(currentOffset + 1, totalLength);
+      int high = (currentOffset + (estimatedCharsPerPage * 1.5).toInt()).clamp(low, totalLength);
       int bestEnd = low;
 
       while (low <= high) {
@@ -122,11 +130,10 @@ class PaginationEngine {
         }
       }
 
-      // 3. Snap boundary to natural sentence ending or newline to avoid mid-word truncation
+      // Natural punctuation boundary snap
       int pageEnd = bestEnd;
       if (pageEnd < totalLength) {
-        // Look back up to 24 characters for a line break or Chinese punctuation
-        for (int lookback = 0; lookback < 24 && (pageEnd - lookback) > currentOffset + 15; lookback++) {
+        for (int lookback = 0; lookback < 20 && (pageEnd - lookback) > currentOffset + 10; lookback++) {
           final ch = processedText[pageEnd - lookback - 1];
           if (ch == '\n' || ch == '。' || ch == '！' || ch == '？' || ch == '；') {
             pageEnd = pageEnd - lookback;
@@ -136,7 +143,7 @@ class PaginationEngine {
       }
 
       if (pageEnd <= currentOffset) {
-        pageEnd = (currentOffset + 1).clamp(0, totalLength);
+        pageEnd = (currentOffset + (estimatedCharsPerPage * 0.8).toInt()).clamp(currentOffset + 1, totalLength);
       }
 
       final pageText = processedText.substring(currentOffset, pageEnd);
@@ -153,7 +160,6 @@ class PaginationEngine {
       currentOffset = pageEnd;
     }
 
-    // Patch total pages in chapter
     final totalPages = slices.length;
     return slices.map((s) => PageSlice(
       pageIndex: s.pageIndex,
@@ -164,15 +170,5 @@ class PaginationEngine {
       startCharOffset: s.startCharOffset,
       endCharOffset: s.endCharOffset,
     )).toList();
-  }
-
-  /// Locates which page slice contains the specific character offset after reflow
-  static int findPageIndexForOffset(List<PageSlice> pages, int charOffset) {
-    for (int i = 0; i < pages.length; i++) {
-      if (charOffset >= pages[i].startCharOffset && charOffset < pages[i].endCharOffset) {
-        return i;
-      }
-    }
-    return 0;
   }
 }

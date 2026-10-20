@@ -4,23 +4,24 @@ import '../models/book.dart';
 import '../theme/archival_theme.dart';
 import '../ui/widgets/archive_code.dart';
 import '../ui/widgets/mini_status_bar.dart';
-import 'acoustic_engine.dart';
-import 'bionic_reading.dart';
 import 'nine_grid_gesture.dart';
-import 'reading_ruler.dart';
 import 'illustration_extractor.dart';
 import 'pagination_engine.dart';
 import '../ai/ai_reading_assistant.dart';
 import '../ai/character_graph_view.dart';
 import '../services/tts_service.dart';
+import '../services/font_service.dart';
 
-/// Active Reading Theme Definition
+/// Active Reading Theme Definition (8 Archival & Eye-care Themes)
 enum ReaderThemePreset {
   archivalPaper('温润羊皮纸', Color(0xFFF4F3EF), Color(0xFF191919), Color(0xFF8C827A)),
-  obsidianDark('曜石夜间', Color(0xFF191919), Color(0xFFE2E2E2), Color(0xFF4A4A4A)),
+  obsidianDark('曜石暗黑', Color(0xFF191919), Color(0xFFE2E2E2), Color(0xFF4A4A4A)),
   milkWhite('羊脂玉白', Color(0xFFFAFAFA), Color(0xFF222222), Color(0xFF9E9E9E)),
   matchaGreen('护眼豆沙绿', Color(0xFFE9EFE6), Color(0xFF2B3A28), Color(0xFF6B7E68)),
-  eInk('水墨二值', Color(0xFFFFFFFF), Color(0xFF000000), Color(0xFF555555));
+  eInk('水墨墨水屏', Color(0xFFFFFFFF), Color(0xFF000000), Color(0xFF555555)),
+  sunsetDusk('暮色晚霞', Color(0xFF2B2527), Color(0xFFEBDDD8), Color(0xFF7A686C)),
+  deepSea('深海幽蓝', Color(0xFF151C28), Color(0xFFC9D6E8), Color(0xFF4F627D)),
+  morningGlow('雅致晨曦', Color(0xFFF9F6F0), Color(0xFF3D3731), Color(0xFF8F857B));
 
   final String label;
   final Color backgroundColor;
@@ -30,7 +31,7 @@ enum ReaderThemePreset {
   const ReaderThemePreset(this.label, this.backgroundColor, this.textColor, this.secondaryColor);
 }
 
-/// Master Reader Viewport with Unified Multi-Chapter Pagination, Moon+ Gestures, and Archival Aesthetics.
+/// Master Reader Viewport featuring on-demand chapter pagination, Moon+ gestures, real TTS, and font importing.
 class ReaderView extends StatefulWidget {
   final Book book;
 
@@ -43,50 +44,59 @@ class ReaderView extends StatefulWidget {
 class _ReaderViewState extends State<ReaderView> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
-  // Flattened list of chapters
+  // Flattened chapters
   late List<ChapterItem> _allChapters;
-  final List<int> _chapterStartingSliceIndex = [];
-  List<PageSlice> _allSlices = [];
-  int _currentGlobalSliceIndex = 0;
-  final PageController _pageController = PageController();
+  int _currentChapterIndex = 0;
+  int _currentPageInChapter = 0;
+  List<PageSlice> _slices = [];
+  PageController _pageController = PageController();
 
   // Typography & Layout state
   double _fontSize = 18.0;
   double _lineHeight = 1.8;
+  double _paragraphSpacing = 8.0;
   String _fontFamily = 'SourceHanSerifCN';
   bool _indentTwoChars = true;
   TextAlign _textAlign = TextAlign.justify;
 
-  // Visual & Brightness state
+  // Visual & Colors state
   ReaderThemePreset _currentTheme = ReaderThemePreset.archivalPaper;
   double _brightness = 1.0;
   bool _showBrightnessOverlay = false;
   Timer? _brightnessTimer;
+  double _warmFilterOpacity = 0.0; // Amber warm filter 0.0 to 0.4
 
-  // Reading tools
+  // Reading Assist state (Moon+ Reader Eye Health & Auto Turn)
   bool _hudVisible = false;
-  bool _rulerVisible = false;
-  RulerStyle _rulerStyle = RulerStyle.yellowHighlight;
-  BionicReadingMode _bionicMode = BionicReadingMode.disabled;
+  bool _autoTurnEnabled = false;
+  int _autoTurnSeconds = 15;
+  Timer? _autoTurnTimer;
+  int _eyeRestMinutes = 45; // 0: disabled, 30, 45, 60
+  Timer? _eyeRestTimer;
+  int _readingMinutesElapsed = 0;
 
-  // Sound & Acoustics
-  late final AcousticEngine _acousticEngine;
+  // TTS Engine
   final TtsService _ttsService = TtsService();
 
-  // Viewport tracking for reflow
+  // Viewport tracking for instant on-demand pagination
   Size? _lastViewportSize;
 
   @override
   void initState() {
     super.initState();
-    _acousticEngine = AcousticEngine()..init();
     _prepareChapters();
+    _initTts();
+    _startEyeHealthTracker();
+    FontService().init();
   }
 
   @override
   void dispose() {
     _brightnessTimer?.cancel();
+    _autoTurnTimer?.cancel();
+    _eyeRestTimer?.cancel();
     _pageController.dispose();
+    _ttsService.stop();
     super.dispose();
   }
 
@@ -108,67 +118,99 @@ class _ReaderViewState extends State<ReaderView> {
     }
 
     _allChapters = list;
+    _currentChapterIndex = widget.book.currentChapterIndex.clamp(0, _allChapters.length - 1);
   }
 
-  /// Paginates all chapters of the book into a unified continuous slice sequence
-  void _paginateAllChapters(Size size) {
+  void _initTts() {
+    _ttsService.init();
+    _ttsService.onStateChanged = () {
+      if (mounted) setState(() {});
+    };
+  }
+
+  void _startEyeHealthTracker() {
+    _eyeRestTimer?.cancel();
+    _eyeRestTimer = Timer.periodic(const Duration(minutes: 1), (timer) {
+      _readingMinutesElapsed++;
+      if (_eyeRestMinutes > 0 && _readingMinutesElapsed >= _eyeRestMinutes) {
+        _readingMinutesElapsed = 0;
+        _showEyeRestDialog();
+      }
+    });
+  }
+
+  void _showEyeRestDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _currentTheme.backgroundColor,
+        title: Row(
+          children: [
+            const Icon(Icons.remove_red_eye_outlined, color: Colors.green),
+            const SizedBox(width: 8),
+            Text('护眼休息提示', style: TextStyle(color: _currentTheme.textColor, fontSize: 16)),
+          ],
+        ),
+        content: Text(
+          '您已经专注阅读超过 $_eyeRestMinutes 分钟。\n建议闭目养神或极目远眺 30 秒，缓解睫状肌疲劳。',
+          style: TextStyle(color: _currentTheme.textColor, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('我知道了', style: TextStyle(color: _currentTheme.textColor)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _toggleAutoTurn(bool enabled) {
+    setState(() => _autoTurnEnabled = enabled);
+    _autoTurnTimer?.cancel();
+    if (enabled) {
+      _autoTurnTimer = Timer.periodic(Duration(seconds: _autoTurnSeconds), (_) {
+        if (mounted) _nextPage();
+      });
+    }
+  }
+
+  /// On-demand instant pagination for the current chapter only (< 3ms)
+  void _paginateCurrentChapter(Size size) {
     if (_allChapters.isEmpty) return;
+
+    final chapter = _allChapters[_currentChapterIndex];
+    final text = chapter.content ?? chapter.title;
 
     final textStyle = TextStyle(
       fontSize: _fontSize,
       height: _lineHeight,
-      fontFamily: _fontFamily == 'SourceHanSerifCN' ? 'SourceHanSerifCN' : null,
+      fontFamily: _fontFamily == 'SourceHanSerifCN'
+          ? 'SourceHanSerifCN'
+          : (_fontFamily == 'System' ? null : _fontFamily),
       color: _currentTheme.textColor,
     );
 
-    final combinedSlices = <PageSlice>[];
-    _chapterStartingSliceIndex.clear();
-
-    for (int chIdx = 0; chIdx < _allChapters.length; chIdx++) {
-      final chapter = _allChapters[chIdx];
-      final text = chapter.content ?? chapter.title;
-
-      _chapterStartingSliceIndex.add(combinedSlices.length);
-
-      final slices = PaginationEngine.paginateChapter(
-        chapterText: text,
-        chapterIndex: chIdx,
-        chapterTitle: chapter.title,
-        viewportSize: size,
-        padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20.0),
-        textStyle: textStyle,
-        indentTwoChars: _indentTwoChars,
-      );
-
-      combinedSlices.addAll(slices);
-    }
-
-    // If completely empty, add 1 empty fallback slice
-    if (combinedSlices.isEmpty) {
-      combinedSlices.add(
-        PageSlice(
-          pageIndex: 0,
-          totalPagesInChapter: 1,
-          chapterIndex: 0,
-          chapterTitle: widget.book.title,
-          content: '【无内容】',
-          startCharOffset: 0,
-          endCharOffset: 0,
-        ),
-      );
-      _chapterStartingSliceIndex.add(0);
-    }
+    final slices = PaginationEngine.paginateChapter(
+      chapterText: text,
+      chapterIndex: _currentChapterIndex,
+      chapterTitle: chapter.title,
+      viewportSize: size,
+      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20.0),
+      textStyle: textStyle,
+      indentTwoChars: _indentTwoChars,
+    );
 
     setState(() {
-      _allSlices = combinedSlices;
-      if (_currentGlobalSliceIndex >= _allSlices.length) {
-        _currentGlobalSliceIndex = (_allSlices.length - 1).clamp(0, 99999);
+      _slices = slices;
+      if (_currentPageInChapter >= _slices.length) {
+        _currentPageInChapter = (_slices.length - 1).clamp(0, 9999);
       }
     });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_pageController.hasClients && _pageController.page?.round() != _currentGlobalSliceIndex) {
-        _pageController.jumpToPage(_currentGlobalSliceIndex);
+      if (_pageController.hasClients && _pageController.page?.round() != _currentPageInChapter) {
+        _pageController.jumpToPage(_currentPageInChapter);
       }
     });
   }
@@ -184,48 +226,58 @@ class _ReaderViewState extends State<ReaderView> {
       } else if (zone == GridZone.centerRight || zone == GridZone.topRight || zone == GridZone.bottomRight) {
         _nextPage();
       }
-    } else if (type == GestureType.doubleTap) {
-      setState(() {
-        _rulerVisible = !_rulerVisible;
-      });
     }
   }
 
   void _nextPage() {
-    if (_currentGlobalSliceIndex < _allSlices.length - 1) {
+    if (_currentPageInChapter < _slices.length - 1) {
       _pageController.nextPage(
-        duration: const Duration(milliseconds: 250),
+        duration: const Duration(milliseconds: 200),
         curve: Curves.easeOutCubic,
       );
-      _acousticEngine.playPageTurnSound();
+    } else if (_currentChapterIndex < _allChapters.length - 1) {
+      // Advance to next chapter
+      _goToChapter(_currentChapterIndex + 1, startAtLastPage: false);
+      _showToast('进入下一章: ${_allChapters[_currentChapterIndex].title}');
     } else {
       _showToast('已到达全书最后一页');
     }
   }
 
   void _prevPage() {
-    if (_currentGlobalSliceIndex > 0) {
+    if (_currentPageInChapter > 0) {
       _pageController.previousPage(
-        duration: const Duration(milliseconds: 250),
+        duration: const Duration(milliseconds: 200),
         curve: Curves.easeOutCubic,
       );
-      _acousticEngine.playPageTurnSound();
+    } else if (_currentChapterIndex > 0) {
+      // Revert to previous chapter's end
+      _goToChapter(_currentChapterIndex - 1, startAtLastPage: true);
+      _showToast('回到上一章: ${_allChapters[_currentChapterIndex].title}');
     } else {
       _showToast('已到达全书开头');
     }
   }
 
-  void _jumpToChapter(int chapterIndex) {
-    if (chapterIndex < 0 || chapterIndex >= _chapterStartingSliceIndex.length) return;
-    final targetSlice = _chapterStartingSliceIndex[chapterIndex];
-    if (targetSlice < _allSlices.length) {
-      setState(() {
-        _currentGlobalSliceIndex = targetSlice;
-      });
-      if (_pageController.hasClients) {
-        _pageController.jumpToPage(targetSlice);
+  void _goToChapter(int chapterIndex, {bool startAtLastPage = false}) {
+    if (chapterIndex < 0 || chapterIndex >= _allChapters.length) return;
+    setState(() {
+      _currentChapterIndex = chapterIndex;
+      _currentPageInChapter = 0;
+    });
+
+    if (_lastViewportSize != null) {
+      _paginateCurrentChapter(_lastViewportSize!);
+      if (startAtLastPage && _slices.isNotEmpty) {
+        setState(() {
+          _currentPageInChapter = _slices.length - 1;
+        });
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (_pageController.hasClients) {
+            _pageController.jumpToPage(_currentPageInChapter);
+          }
+        });
       }
-      _acousticEngine.playPageTurnSound();
     }
   }
 
@@ -257,10 +309,13 @@ class _ReaderViewState extends State<ReaderView> {
 
   @override
   Widget build(BuildContext context) {
-    final currentSlice = _allSlices.isNotEmpty ? _allSlices[_currentGlobalSliceIndex] : null;
-    final chapterTitle = currentSlice?.chapterTitle ?? widget.book.title;
-    final totalSlices = _allSlices.isNotEmpty ? _allSlices.length : 1;
-    final overallProgress = totalSlices > 0 ? (_currentGlobalSliceIndex + 1) / totalSlices : 0.0;
+    final currentChapter = _allChapters.isNotEmpty ? _allChapters[_currentChapterIndex] : null;
+    final chapterTitle = currentChapter?.title ?? widget.book.title;
+    final totalChapters = _allChapters.length;
+    final totalPagesInChapter = _slices.isNotEmpty ? _slices.length : 1;
+    final overallProgress = totalChapters > 0
+        ? (_currentChapterIndex + (_currentPageInChapter + 1) / totalPagesInChapter) / totalChapters
+        : 0.0;
 
     return Scaffold(
       key: _scaffoldKey,
@@ -269,13 +324,13 @@ class _ReaderViewState extends State<ReaderView> {
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final currentSize = Size(constraints.maxWidth, constraints.maxHeight - 36.0); // reserve for status bar
+            final currentSize = Size(constraints.maxWidth, constraints.maxHeight - 36.0);
             if (_lastViewportSize == null ||
                 (_lastViewportSize!.width - currentSize.width).abs() > 2 ||
                 (_lastViewportSize!.height - currentSize.height).abs() > 2) {
               _lastViewportSize = currentSize;
               WidgetsBinding.instance.addPostFrameCallback((_) {
-                _paginateAllChapters(currentSize);
+                _paginateCurrentChapter(currentSize);
               });
             }
 
@@ -287,25 +342,24 @@ class _ReaderViewState extends State<ReaderView> {
                   child: Column(
                     children: [
                       Expanded(
-                        child: _allSlices.isEmpty
+                        child: _slices.isEmpty
                             ? Center(
                                 child: Text(
-                                  '正在编排物理页码...',
+                                  '正在编排页码...',
                                   style: ArchivalTheme.codeStyle(color: _currentTheme.secondaryColor),
                                 ),
                               )
                             : PageView.builder(
                                 controller: _pageController,
-                                itemCount: _allSlices.length,
+                                itemCount: _slices.length,
                                 physics: const BouncingScrollPhysics(),
                                 onPageChanged: (index) {
                                   setState(() {
-                                    _currentGlobalSliceIndex = index;
+                                    _currentPageInChapter = index;
                                   });
-                                  _acousticEngine.playPageTurnSound();
                                 },
                                 itemBuilder: (context, index) {
-                                  final slice = _allSlices[index];
+                                  final slice = _slices[index];
                                   return _buildPageSurface(slice);
                                 },
                               ),
@@ -314,9 +368,7 @@ class _ReaderViewState extends State<ReaderView> {
                       MiniStatusBar(
                         chapterTitle: chapterTitle,
                         progressPercent: overallProgress.clamp(0.0, 1.0),
-                        currentTime: currentSlice != null
-                            ? '${currentSlice.pageIndex + 1}/${currentSlice.totalPagesInChapter} 页 (全书 ${indexString()})'
-                            : '${_currentGlobalSliceIndex + 1}/$totalSlices 页',
+                        currentTime: '${_currentPageInChapter + 1}/$totalPagesInChapter 页',
                       ),
                     ],
                   ),
@@ -340,6 +392,16 @@ class _ReaderViewState extends State<ReaderView> {
                     child: IgnorePointer(
                       child: Container(
                         color: Colors.black.withValues(alpha: (1.0 - _brightness) * 0.8),
+                      ),
+                    ),
+                  ),
+
+                // Amber Warm Filter Overlay (0% ~ 40%)
+                if (_warmFilterOpacity > 0.01)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: Container(
+                        color: const Color(0xFFFF9800).withValues(alpha: _warmFilterOpacity),
                       ),
                     ),
                   ),
@@ -372,11 +434,33 @@ class _ReaderViewState extends State<ReaderView> {
                     ),
                   ),
 
-                // Reading Ruler Overlay
-                ReadingRulerOverlay(
-                  visible: _rulerVisible,
-                  style: _rulerStyle,
-                ),
+                // Auto Turn Floating Status Pill
+                if (_autoTurnEnabled)
+                  Positioned(
+                    top: 12,
+                    right: 16,
+                    child: GestureDetector(
+                      onTap: () => _toggleAutoTurn(false),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: _currentTheme.textColor.withValues(alpha: 0.85),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.play_arrow, size: 14, color: _currentTheme.backgroundColor),
+                            const SizedBox(width: 4),
+                            Text(
+                              '自动翻页 ${_autoTurnSeconds}s',
+                              style: TextStyle(fontSize: 10, color: _currentTheme.backgroundColor, fontWeight: FontWeight.bold),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
 
                 // Top HUD Bar
                 if (_hudVisible)
@@ -393,7 +477,7 @@ class _ReaderViewState extends State<ReaderView> {
                     bottom: 0,
                     left: 0,
                     right: 0,
-                    child: _buildBottomHud(context, totalSlices),
+                    child: _buildBottomHud(context, totalPagesInChapter),
                   ),
               ],
             );
@@ -403,27 +487,22 @@ class _ReaderViewState extends State<ReaderView> {
     );
   }
 
-  String indexString() => '${_currentGlobalSliceIndex + 1}/${_allSlices.length}';
-
   Widget _buildPageSurface(PageSlice slice) {
     final baseTextStyle = TextStyle(
       fontSize: _fontSize,
       height: _lineHeight,
-      fontFamily: _fontFamily == 'SourceHanSerifCN' ? 'SourceHanSerifCN' : null,
+      fontFamily: _fontFamily == 'SourceHanSerifCN'
+          ? 'SourceHanSerifCN'
+          : (_fontFamily == 'System' ? null : _fontFamily),
       color: _currentTheme.textColor,
     );
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
-      child: RichText(
+      child: Text(
+        slice.content,
         textAlign: _textAlign,
-        text: TextSpan(
-          children: BionicReadingParser.parseText(
-            text: slice.content,
-            baseStyle: baseTextStyle,
-            mode: _bionicMode,
-          ),
-        ),
+        style: baseTextStyle,
       ),
     );
   }
@@ -433,8 +512,6 @@ class _ReaderViewState extends State<ReaderView> {
   // ==========================================
 
   Widget _buildTopHud(BuildContext context) {
-    final currentSlice = _allSlices.isNotEmpty ? _allSlices[_currentGlobalSliceIndex] : null;
-
     return Container(
       height: 56.0,
       decoration: BoxDecoration(
@@ -473,7 +550,7 @@ class _ReaderViewState extends State<ReaderView> {
                   style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: _currentTheme.textColor),
                 ),
                 Text(
-                  currentSlice?.chapterTitle ?? '',
+                  _allChapters.isNotEmpty ? _allChapters[_currentChapterIndex].title : '',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 11, color: _currentTheme.secondaryColor),
@@ -515,7 +592,7 @@ class _ReaderViewState extends State<ReaderView> {
             icon: Icon(Icons.auto_awesome, color: _currentTheme.textColor),
             tooltip: 'AI 阅读助手',
             onPressed: () {
-              final contextSnippet = _allSlices.isNotEmpty ? _allSlices[_currentGlobalSliceIndex].content : '';
+              final contextSnippet = _slices.isNotEmpty ? _slices[_currentPageInChapter].content : '';
               Navigator.push(
                 context,
                 MaterialPageRoute(
@@ -532,7 +609,7 @@ class _ReaderViewState extends State<ReaderView> {
     );
   }
 
-  Widget _buildBottomHud(BuildContext context, int totalSlices) {
+  Widget _buildBottomHud(BuildContext context, int totalPagesInChapter) {
     return Container(
       decoration: BoxDecoration(
         color: _currentTheme.backgroundColor.withValues(alpha: 0.96),
@@ -549,21 +626,21 @@ class _ReaderViewState extends State<ReaderView> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Slider for progress within the whole book
+          // Slider for progress within chapter
           Row(
             children: [
-              Text('${_currentGlobalSliceIndex + 1}', style: ArchivalTheme.codeStyle(color: _currentTheme.textColor)),
+              Text('${_currentPageInChapter + 1}', style: ArchivalTheme.codeStyle(color: _currentTheme.textColor)),
               Expanded(
                 child: Slider(
-                  value: (_currentGlobalSliceIndex + 1).toDouble().clamp(1.0, totalSlices.toDouble()),
+                  value: (_currentPageInChapter + 1).toDouble().clamp(1.0, totalPagesInChapter.toDouble()),
                   min: 1.0,
-                  max: totalSlices > 1 ? totalSlices.toDouble() : 1.0,
+                  max: totalPagesInChapter.toDouble() > 1 ? totalPagesInChapter.toDouble() : 1.0,
                   activeColor: _currentTheme.textColor,
                   inactiveColor: _currentTheme.secondaryColor.withValues(alpha: 0.3),
                   onChanged: (val) {
                     final target = val.round() - 1;
-                    if (target != _currentGlobalSliceIndex) {
-                      setState(() => _currentGlobalSliceIndex = target);
+                    if (target != _currentPageInChapter) {
+                      setState(() => _currentPageInChapter = target);
                       if (_pageController.hasClients) {
                         _pageController.jumpToPage(target);
                       }
@@ -571,10 +648,10 @@ class _ReaderViewState extends State<ReaderView> {
                   },
                 ),
               ),
-              Text('$totalSlices', style: ArchivalTheme.codeStyle(color: _currentTheme.textColor)),
+              Text('$totalPagesInChapter', style: ArchivalTheme.codeStyle(color: _currentTheme.textColor)),
             ],
           ),
-          // Tool button bar
+          // Quick Action Bar
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
@@ -591,34 +668,27 @@ class _ReaderViewState extends State<ReaderView> {
                     _fontSize = _fontSize >= 26 ? 14 : _fontSize + 2;
                   });
                   if (_lastViewportSize != null) {
-                    _paginateAllChapters(_lastViewportSize!);
+                    _paginateCurrentChapter(_lastViewportSize!);
                   }
                 },
               ),
               _buildToolButton(
-                icon: Icons.straighten,
-                label: '标尺',
-                active: _rulerVisible,
-                onTap: () => setState(() => _rulerVisible = !_rulerVisible),
+                icon: Icons.play_circle_outline,
+                label: _autoTurnEnabled ? '停止翻页' : '自动翻页',
+                active: _autoTurnEnabled,
+                onTap: () => _toggleAutoTurn(!_autoTurnEnabled),
               ),
               _buildToolButton(
-                icon: Icons.visibility_outlined,
-                label: '仿生阅读',
-                active: _bionicMode != BionicReadingMode.disabled,
+                icon: _ttsService.isPlaying ? Icons.pause_circle_filled : Icons.volume_up_outlined,
+                label: _ttsService.isPlaying ? '暂停朗读' : '听书朗读',
+                active: _ttsService.isPlaying,
                 onTap: () {
-                  setState(() {
-                    _bionicMode = _bionicMode == BionicReadingMode.disabled
-                        ? BionicReadingMode.chinesePhraseHead
-                        : BionicReadingMode.disabled;
-                  });
-                },
-              ),
-              _buildToolButton(
-                icon: Icons.volume_up_outlined,
-                label: '翻页音',
-                active: _acousticEngine.enabled,
-                onTap: () {
-                  setState(() => _acousticEngine.enabled = !_acousticEngine.enabled);
+                  if (_ttsService.isPlaying) {
+                    _ttsService.stop();
+                  } else {
+                    final text = _slices.isNotEmpty ? _slices[_currentPageInChapter].content : '';
+                    _ttsService.startSpeaking(text: text);
+                  }
                 },
               ),
               _buildToolButton(
@@ -670,9 +740,6 @@ class _ReaderViewState extends State<ReaderView> {
   // ==========================================
 
   Widget _buildTocDrawer(BuildContext context) {
-    final currentSlice = _allSlices.isNotEmpty ? _allSlices[_currentGlobalSliceIndex] : null;
-    final currentChIdx = currentSlice?.chapterIndex ?? 0;
-
     return Drawer(
       backgroundColor: _currentTheme.backgroundColor,
       child: SafeArea(
@@ -698,7 +765,7 @@ class _ReaderViewState extends State<ReaderView> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '${widget.book.author} · 共 ${_allChapters.length} 章节 · 全书 ${_allSlices.length} 页',
+                    '${widget.book.author} · 共 ${_allChapters.length} 章节',
                     style: TextStyle(fontSize: 12, color: _currentTheme.secondaryColor),
                   ),
                 ],
@@ -717,7 +784,7 @@ class _ReaderViewState extends State<ReaderView> {
                 ),
                 itemBuilder: (context, index) {
                   final chapter = _allChapters[index];
-                  final isCurrent = index == currentChIdx;
+                  final isCurrent = index == _currentChapterIndex;
                   return ListTile(
                     selected: isCurrent,
                     selectedTileColor: _currentTheme.secondaryColor.withValues(alpha: 0.12),
@@ -735,8 +802,8 @@ class _ReaderViewState extends State<ReaderView> {
                     ),
                     trailing: isCurrent ? Icon(Icons.bookmark, size: 18, color: _currentTheme.textColor) : null,
                     onTap: () {
-                      Navigator.pop(context); // close drawer
-                      _jumpToChapter(index);
+                      Navigator.pop(context);
+                      _goToChapter(index);
                     },
                   );
                 },
@@ -749,7 +816,7 @@ class _ReaderViewState extends State<ReaderView> {
   }
 
   // ==========================================
-  // COMPREHENSIVE SETTINGS MODAL (MOON+ STYLE)
+  // MOON+ READER 5-TAB COMPREHENSIVE SETTINGS
   // ==========================================
 
   void _showComprehensiveSettingsModal(BuildContext context) {
@@ -766,11 +833,11 @@ class _ReaderViewState extends State<ReaderView> {
             return DefaultTabController(
               length: 5,
               child: Container(
-                height: 480,
+                height: 500,
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 child: Column(
                   children: [
-                    // Modal Handle
+                    // Handle bar
                     Container(
                       width: 40,
                       height: 4,
@@ -780,7 +847,7 @@ class _ReaderViewState extends State<ReaderView> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    // Multi-Tab Bar
+                    // Multi-Tab Bar mirroring Moon+ Reader
                     TabBar(
                       isScrollable: true,
                       labelColor: _currentTheme.textColor,
@@ -790,9 +857,9 @@ class _ReaderViewState extends State<ReaderView> {
                       tabs: const [
                         Tab(text: '视觉排版'),
                         Tab(text: '主题色彩'),
-                        Tab(text: '翻页音效'),
-                        Tab(text: '阅读辅助'),
-                        Tab(text: '听书朗读'),
+                        Tab(text: '控制手势'),
+                        Tab(text: '辅助护眼'),
+                        Tab(text: '听书语音'),
                       ],
                     ),
                     Expanded(
@@ -800,8 +867,8 @@ class _ReaderViewState extends State<ReaderView> {
                         children: [
                           _buildTypographyTab(setModalState),
                           _buildThemeTab(setModalState),
-                          _buildTurnSoundTab(setModalState),
-                          _buildAssistToolsTab(setModalState),
+                          _buildControlGestureTab(setModalState),
+                          _buildEyeHealthTab(setModalState),
                           _buildTtsTab(setModalState),
                         ],
                       ),
@@ -817,9 +884,53 @@ class _ReaderViewState extends State<ReaderView> {
   }
 
   Widget _buildTypographyTab(StateSetter setModalState) {
+    final customFonts = FontService().customFonts;
+    final allFonts = ['SourceHanSerifCN', 'System', 'Monospace', ...customFonts];
+
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
+        // Font Selection & Custom Font Import
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text('阅读字体族', style: TextStyle(fontWeight: FontWeight.bold, color: _currentTheme.textColor)),
+            TextButton.icon(
+              icon: const Icon(Icons.add_circle_outline, size: 16),
+              label: const Text('导入本地字体', style: TextStyle(fontSize: 12)),
+              onPressed: () async {
+                final fontName = await FontService().pickAndImportFont();
+                if (fontName != null && mounted) {
+                  setState(() => _fontFamily = fontName);
+                  setModalState(() {});
+                  if (_lastViewportSize != null) _paginateCurrentChapter(_lastViewportSize!);
+                  _showToast('成功导入并应用字体: $fontName');
+                }
+              },
+            ),
+          ],
+        ),
+        Wrap(
+          spacing: 8,
+          children: allFonts.map((font) {
+            final isSelected = _fontFamily == font;
+            final label = font == 'SourceHanSerifCN'
+                ? '思源宋体'
+                : (font == 'System' ? '系统黑体' : (font == 'Monospace' ? '机械等宽' : font));
+            return ChoiceChip(
+              label: Text(label),
+              selected: isSelected,
+              onSelected: (_) {
+                setState(() => _fontFamily = font);
+                setModalState(() {});
+                if (_lastViewportSize != null) _paginateCurrentChapter(_lastViewportSize!);
+              },
+            );
+          }).toList(),
+        ),
+        const SizedBox(height: 16),
+
+        // Font Size
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
@@ -832,7 +943,7 @@ class _ReaderViewState extends State<ReaderView> {
                     if (_fontSize > 12) {
                       setState(() => _fontSize -= 1);
                       setModalState(() {});
-                      if (_lastViewportSize != null) _paginateAllChapters(_lastViewportSize!);
+                      if (_lastViewportSize != null) _paginateCurrentChapter(_lastViewportSize!);
                     }
                   },
                 ),
@@ -843,7 +954,7 @@ class _ReaderViewState extends State<ReaderView> {
                     if (_fontSize < 36) {
                       setState(() => _fontSize += 1);
                       setModalState(() {});
-                      if (_lastViewportSize != null) _paginateAllChapters(_lastViewportSize!);
+                      if (_lastViewportSize != null) _paginateCurrentChapter(_lastViewportSize!);
                     }
                   },
                 ),
@@ -859,14 +970,16 @@ class _ReaderViewState extends State<ReaderView> {
           onChanged: (v) {
             setState(() => _fontSize = v);
             setModalState(() {});
-            if (_lastViewportSize != null) _paginateAllChapters(_lastViewportSize!);
+            if (_lastViewportSize != null) _paginateCurrentChapter(_lastViewportSize!);
           },
         ),
         const SizedBox(height: 12),
+
+        // Line Height
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text('行高倍率 (${_lineHeight.toStringAsFixed(1)})', style: TextStyle(fontWeight: FontWeight.bold, color: _currentTheme.textColor)),
+            Text('行间距倍率 (${_lineHeight.toStringAsFixed(1)})', style: TextStyle(fontWeight: FontWeight.bold, color: _currentTheme.textColor)),
             Text('${_lineHeight.toStringAsFixed(1)}x', style: ArchivalTheme.codeStyle(color: _currentTheme.textColor)),
           ],
         ),
@@ -878,18 +991,20 @@ class _ReaderViewState extends State<ReaderView> {
           onChanged: (v) {
             setState(() => _lineHeight = v);
             setModalState(() {});
-            if (_lastViewportSize != null) _paginateAllChapters(_lastViewportSize!);
+            if (_lastViewportSize != null) _paginateCurrentChapter(_lastViewportSize!);
           },
         ),
         const SizedBox(height: 12),
+
+        // Indent & Align
         SwitchListTile(
-          title: Text('中文首行缩进两全角空格', style: TextStyle(color: _currentTheme.textColor)),
+          title: Text('中文首行自动空两全角格', style: TextStyle(color: _currentTheme.textColor)),
           value: _indentTwoChars,
           activeColor: _currentTheme.textColor,
           onChanged: (val) {
             setState(() => _indentTwoChars = val);
             setModalState(() {});
-            if (_lastViewportSize != null) _paginateAllChapters(_lastViewportSize!);
+            if (_lastViewportSize != null) _paginateCurrentChapter(_lastViewportSize!);
           },
         ),
         SwitchListTile(
@@ -912,19 +1027,19 @@ class _ReaderViewState extends State<ReaderView> {
         Text('内置护眼典藏主题', style: TextStyle(fontWeight: FontWeight.bold, color: _currentTheme.textColor)),
         const SizedBox(height: 12),
         Wrap(
-          spacing: 12,
-          runSpacing: 12,
+          spacing: 10,
+          runSpacing: 10,
           children: ReaderThemePreset.values.map((preset) {
             final isSelected = _currentTheme == preset;
             return GestureDetector(
               onTap: () {
                 setState(() => _currentTheme = preset);
                 setModalState(() {});
-                if (_lastViewportSize != null) _paginateAllChapters(_lastViewportSize!);
+                if (_lastViewportSize != null) _paginateCurrentChapter(_lastViewportSize!);
               },
               child: Container(
-                width: 140,
-                padding: const EdgeInsets.all(12),
+                width: 135,
+                padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
                   color: preset.backgroundColor,
                   borderRadius: BorderRadius.circular(8),
@@ -938,15 +1053,10 @@ class _ReaderViewState extends State<ReaderView> {
                     Text(
                       preset.label,
                       style: TextStyle(
-                        fontSize: 13,
+                        fontSize: 12,
                         fontWeight: FontWeight.bold,
                         color: preset.textColor,
                       ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '典藏墨痕',
-                      style: TextStyle(fontSize: 10, color: preset.secondaryColor),
                     ),
                   ],
                 ),
@@ -954,116 +1064,132 @@ class _ReaderViewState extends State<ReaderView> {
             );
           }).toList(),
         ),
+        const SizedBox(height: 20),
+        Divider(color: _currentTheme.secondaryColor.withValues(alpha: 0.2)),
+        const SizedBox(height: 10),
+
+        // Amber Warm Filter
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text('护眼琥珀暖色滤镜 (${(_warmFilterOpacity * 250).toInt()}%)', style: TextStyle(fontWeight: FontWeight.bold, color: _currentTheme.textColor)),
+            Icon(Icons.nightlight_round, size: 18, color: Colors.orange.shade700),
+          ],
+        ),
+        Slider(
+          value: _warmFilterOpacity,
+          min: 0.0,
+          max: 0.4,
+          activeColor: Colors.orange,
+          onChanged: (val) {
+            setState(() => _warmFilterOpacity = val);
+            setModalState(() {});
+          },
+        ),
       ],
     );
   }
 
-  Widget _buildTurnSoundTab(StateSetter setModalState) {
+  Widget _buildControlGestureTab(StateSetter setModalState) {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        SwitchListTile(
-          title: Text('物理纸张翻页音效', style: TextStyle(fontWeight: FontWeight.bold, color: _currentTheme.textColor)),
-          value: _acousticEngine.enabled,
-          activeColor: _currentTheme.textColor,
-          onChanged: (val) {
-            setState(() => _acousticEngine.enabled = val);
-            setModalState(() {});
-          },
-        ),
+        Text('屏幕触控区域与手势', style: TextStyle(fontWeight: FontWeight.bold, color: _currentTheme.textColor)),
         const SizedBox(height: 12),
-        Text('6 款实体纸张高保真采样', style: TextStyle(fontWeight: FontWeight.bold, color: _currentTheme.textColor)),
-        const SizedBox(height: 8),
-        ...[
-          (PageTurnSoundType.book, '经典硬壳书页 (book.wav)'),
-          (PageTurnSoundType.magazine, '铜版光滑杂志 (magazine.wav)'),
-          (PageTurnSoundType.natural, '纯木浆轻型纸 (natural.wav)'),
-          (PageTurnSoundType.quick, '极速沙沙轻翻 (quick.wav)'),
-          (PageTurnSoundType.quiet, '静谧微风翻动 (quiet.wav)'),
-          (PageTurnSoundType.soft, '柔软棉质羊皮 (soft.wav)'),
-        ].map((item) {
-          final isSelected = _acousticEngine.currentSound == item.$1;
-          return ListTile(
-            dense: true,
-            title: Text(item.$2, style: TextStyle(color: _currentTheme.textColor)),
-            leading: Icon(
-              isSelected ? Icons.radio_button_checked : Icons.radio_button_off,
-              color: isSelected ? _currentTheme.textColor : _currentTheme.secondaryColor,
-            ),
-            trailing: IconButton(
-              icon: const Icon(Icons.volume_up, size: 18),
-              onPressed: () {
-                _acousticEngine.currentSound = item.$1;
-                _acousticEngine.playPageTurnSound();
-              },
-            ),
-            onTap: () {
-              setState(() => _acousticEngine.currentSound = item.$1);
-              setModalState(() {});
-              _acousticEngine.playPageTurnSound();
-            },
-          );
-        }),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: _currentTheme.secondaryColor.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Column(
+            children: [
+              _buildGridRow('上一页', '呼出控制台', '下一页'),
+              const Divider(),
+              _buildGridRow('上一页', '呼出控制台', '下一页'),
+              const Divider(),
+              _buildGridRow('上一页', '呼出控制台', '下一页'),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        ListTile(
+          dense: true,
+          leading: const Icon(Icons.touch_app_outlined),
+          title: Text('左边缘垂直滑动调光', style: TextStyle(color: _currentTheme.textColor)),
+          subtitle: Text('沿屏幕最左侧上下滑动，可无级调节屏幕背光亮度', style: TextStyle(fontSize: 11, color: _currentTheme.secondaryColor)),
+        ),
       ],
     );
   }
 
-  Widget _buildAssistToolsTab(StateSetter setModalState) {
+  Widget _buildGridRow(String c1, String c2, String c3) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceAround,
+      children: [
+        Text(c1, style: TextStyle(fontSize: 11, color: _currentTheme.textColor)),
+        Text(c2, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: _currentTheme.textColor)),
+        Text(c3, style: TextStyle(fontSize: 11, color: _currentTheme.textColor)),
+      ],
+    );
+  }
+
+  Widget _buildEyeHealthTab(StateSetter setModalState) {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
+        // Eye health reminder
+        Text('长时阅读防疲劳提醒', style: TextStyle(fontWeight: FontWeight.bold, color: _currentTheme.textColor)),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          children: [0, 30, 45, 60].map((m) {
+            final isSelected = _eyeRestMinutes == m;
+            return ChoiceChip(
+              label: Text(m == 0 ? '关闭提醒' : '$m 分钟'),
+              selected: isSelected,
+              onSelected: (_) {
+                setState(() => _eyeRestMinutes = m);
+                setModalState(() {});
+                _startEyeHealthTracker();
+              },
+            );
+          }).toList(),
+        ),
+        const SizedBox(height: 20),
+        Divider(color: _currentTheme.secondaryColor.withValues(alpha: 0.2)),
+        const SizedBox(height: 12),
+
+        // Auto Page Turn
         SwitchListTile(
-          title: Text('仿生阅读 (Bionic Reading)', style: TextStyle(fontWeight: FontWeight.bold, color: _currentTheme.textColor)),
-          subtitle: Text('词首半段加粗，引导视线快速扫读', style: TextStyle(color: _currentTheme.secondaryColor, fontSize: 11)),
-          value: _bionicMode != BionicReadingMode.disabled,
+          title: Text('定时自动翻页', style: TextStyle(fontWeight: FontWeight.bold, color: _currentTheme.textColor)),
+          subtitle: Text('无需触碰屏幕，按设定间隔时间平稳翻页', style: TextStyle(fontSize: 11, color: _currentTheme.secondaryColor)),
+          value: _autoTurnEnabled,
           activeColor: _currentTheme.textColor,
           onChanged: (val) {
-            setState(() {
-              _bionicMode = val ? BionicReadingMode.chinesePhraseHead : BionicReadingMode.disabled;
-            });
+            _toggleAutoTurn(val);
             setModalState(() {});
           },
         ),
-        const Divider(),
-        SwitchListTile(
-          title: Text('阅读标尺 (Reading Ruler)', style: TextStyle(fontWeight: FontWeight.bold, color: _currentTheme.textColor)),
-          subtitle: Text('聚焦当前正在阅读的行，过滤干扰', style: TextStyle(color: _currentTheme.secondaryColor, fontSize: 11)),
-          value: _rulerVisible,
-          activeColor: _currentTheme.textColor,
-          onChanged: (val) {
-            setState(() => _rulerVisible = val);
-            setModalState(() {});
-          },
-        ),
-        if (_rulerVisible) ...[
+        if (_autoTurnEnabled) ...[
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0),
-            child: Wrap(
-              spacing: 8,
+            child: Row(
               children: [
-                ChoiceChip(
-                  label: const Text('黄色荧光'),
-                  selected: _rulerStyle == RulerStyle.yellowHighlight,
-                  onSelected: (_) {
-                    setState(() => _rulerStyle = RulerStyle.yellowHighlight);
-                    setModalState(() {});
-                  },
-                ),
-                ChoiceChip(
-                  label: const Text('下划线导轨'),
-                  selected: _rulerStyle == RulerStyle.underlineGuide,
-                  onSelected: (_) {
-                    setState(() => _rulerStyle = RulerStyle.underlineGuide);
-                    setModalState(() {});
-                  },
-                ),
-                ChoiceChip(
-                  label: const Text('渐变聚焦条'),
-                  selected: _rulerStyle == RulerStyle.cyanFocusBar,
-                  onSelected: (_) {
-                    setState(() => _rulerStyle = RulerStyle.cyanFocusBar);
-                    setModalState(() {});
-                  },
+                Text('翻页间隔: ${_autoTurnSeconds} 秒', style: TextStyle(fontSize: 12, color: _currentTheme.textColor)),
+                Expanded(
+                  child: Slider(
+                    value: _autoTurnSeconds.toDouble(),
+                    min: 5,
+                    max: 60,
+                    divisions: 11,
+                    activeColor: _currentTheme.textColor,
+                    onChanged: (v) {
+                      setState(() => _autoTurnSeconds = v.round());
+                      setModalState(() {});
+                      _toggleAutoTurn(true);
+                    },
+                  ),
                 ),
               ],
             ),
@@ -1087,26 +1213,24 @@ class _ReaderViewState extends State<ReaderView> {
                   color: _currentTheme.textColor,
                 ),
                 onPressed: () {
-                  setState(() {
-                    if (_ttsService.isPlaying) {
-                      _ttsService.stop();
-                    } else {
-                      final text = _allSlices.isNotEmpty ? _allSlices[_currentGlobalSliceIndex].content : '';
-                      _ttsService.startSpeaking(text: text, role: TtsRole.narrator);
-                    }
-                  });
+                  if (_ttsService.isPlaying) {
+                    _ttsService.stop();
+                  } else {
+                    final text = _slices.isNotEmpty ? _slices[_currentPageInChapter].content : '';
+                    _ttsService.startSpeaking(text: text);
+                  }
                   setModalState(() {});
                 },
               ),
               Text(
-                _ttsService.isPlaying ? '正在朗读当前页内容...' : '点击开始语音朗读',
+                _ttsService.isPlaying ? '正在语音朗读当前页...' : '点击开始语音朗读',
                 style: TextStyle(fontWeight: FontWeight.bold, color: _currentTheme.textColor),
               ),
             ],
           ),
         ),
         const SizedBox(height: 20),
-        Text('朗读语速 (${_ttsService.speed}x)', style: TextStyle(fontWeight: FontWeight.bold, color: _currentTheme.textColor)),
+        Text('朗读语速 (${_ttsService.speed.toStringAsFixed(1)}x)', style: TextStyle(fontWeight: FontWeight.bold, color: _currentTheme.textColor)),
         Slider(
           value: _ttsService.speed,
           min: 0.5,
@@ -1117,6 +1241,11 @@ class _ReaderViewState extends State<ReaderView> {
             setState(() => _ttsService.speed = val);
             setModalState(() {});
           },
+        ),
+        const SizedBox(height: 10),
+        Text(
+          '由系统底层原生语音引擎合成（支持 Android TextToSpeech 与 iOS AVSpeechSynthesizer 离线朗读）。',
+          style: TextStyle(fontSize: 11, color: _currentTheme.secondaryColor),
         ),
       ],
     );

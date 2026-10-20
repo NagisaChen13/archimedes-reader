@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import 'models/book.dart';
 import 'services/book_importer.dart';
 import 'services/storage_service.dart';
+import 'services/font_service.dart';
 import 'theme/archival_theme.dart';
 import 'ui/widgets/archive_code.dart';
 import 'ui/widgets/archive_masthead.dart';
 import 'ui/widgets/archive_registration.dart';
 import 'ui/widgets/liquid_glass_dock.dart';
 import 'reader/reader_view.dart';
+import 'reader/pdf_reader_view.dart';
 import 'stats/stats_dashboard_page.dart';
 
 void main() async {
@@ -458,6 +460,13 @@ class _MasterHomeScreenState extends State<MasterHomeScreen> {
   }
 
   void _openReader(Book book) {
+    if (book.format == 'PDF' && (book.filePath != null && book.filePath!.isNotEmpty)) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => PdfReaderView(book: book, filePath: book.filePath)),
+      ).then((_) => _refreshBooks());
+      return;
+    }
     Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => ReaderView(book: book)),
@@ -468,33 +477,87 @@ class _MasterHomeScreenState extends State<MasterHomeScreen> {
     return ListView(
       padding: const EdgeInsets.only(left: 20, right: 20, top: 20, bottom: 90),
       children: [
-        const ArchiveSectionHeader(title: '工坊核心设置', code: 'CONF-01'),
+        const ArchiveSectionHeader(title: '视觉排版设置', code: 'CONF-VISUAL'),
         const SizedBox(height: 12),
         _buildSettingTile(
           context,
-          title: '3D 仿真真实纸张物理翻页',
-          subtitle: '启用物理网格变形及纸张阴影渐变',
+          title: '自定义本地字体管理',
+          subtitle: '支持导入外部 .ttf 与 .otf 字体文件并即时渲染',
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () async {
+            final name = await FontService().pickAndImportFont();
+            if (name != null && mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('已成功导入本地字体: $name')),
+              );
+            }
+          },
+        ),
+        _buildSettingTile(
+          context,
+          title: 'E-Ink 墨水屏二值化黑白模式',
+          subtitle: '移除所有半色调与色彩，强制纯黑纯白超高对比度',
+          trailing: Switch(value: false, onChanged: (_) {}),
+        ),
+
+        const SizedBox(height: 20),
+        const ArchiveSectionHeader(title: '控制与手势设置', code: 'CONF-CTRL'),
+        const SizedBox(height: 12),
+        _buildSettingTile(
+          context,
+          title: '左边缘滑动调光',
+          subtitle: '沿屏幕左侧边缘上下滑动，无级调节屏幕背光亮度',
           trailing: Switch(value: true, onChanged: (_) {}),
         ),
         _buildSettingTile(
           context,
-          title: '云端同步与备份 (WebDAV / 百度网盘 / NAS)',
+          title: '翻页动画模式',
+          subtitle: '当前：平移动态滑动 (Slide)，支持覆盖与瞬翻',
+          trailing: const Icon(Icons.chevron_right),
+        ),
+
+        const SizedBox(height: 20),
+        const ArchiveSectionHeader(title: '阅读辅助与护眼健康', code: 'CONF-HEALTH'),
+        const SizedBox(height: 12),
+        _buildSettingTile(
+          context,
+          title: '长时阅读防疲劳定时提醒',
+          subtitle: '每连续阅读 45 分钟温和提醒远眺与眼保健操',
+          trailing: Switch(value: true, onChanged: (_) {}),
+        ),
+        _buildSettingTile(
+          context,
+          title: '定时自动翻页模式',
+          subtitle: '支持 5s ~ 60s 自由设定每页停留时长',
+          trailing: const Icon(Icons.chevron_right),
+        ),
+        _buildSettingTile(
+          context,
+          title: '阅读时保持屏幕常亮',
+          subtitle: '禁止系统在阅读沉浸过程中自动休眠锁屏',
+          trailing: Switch(value: true, onChanged: (_) {}),
+        ),
+
+        const SizedBox(height: 20),
+        const ArchiveSectionHeader(title: '云端漫游与备份', code: 'CONF-CLOUD'),
+        const SizedBox(height: 12),
+        _buildSettingTile(
+          context,
+          title: '云端同步与数据备份 (WebDAV / 百度网盘 / NAS)',
           subtitle: '同步书签、批注、阅读历史与进度跨端漫游',
           trailing: const Icon(Icons.chevron_right),
           onTap: () => _showCloudSyncDialog(context),
         ),
+
+        const SizedBox(height: 20),
+        const ArchiveSectionHeader(title: 'AI 知识引擎配置', code: 'CONF-AI'),
+        const SizedBox(height: 12),
         _buildSettingTile(
           context,
           title: 'OpenAI 协议 AI 助手密钥配置',
           subtitle: '已支持 DeepSeek、GPT-4o、Claude 3.5 上下文模型',
           trailing: const Icon(Icons.chevron_right),
           onTap: () => _showAiKeyDialog(context),
-        ),
-        _buildSettingTile(
-          context,
-          title: 'E-Ink 墨水屏二值化黑白模式',
-          subtitle: '移除半色调与动画，强制纯黑纯白超高对比度',
-          trailing: Switch(value: false, onChanged: (_) {}),
         ),
       ],
     );

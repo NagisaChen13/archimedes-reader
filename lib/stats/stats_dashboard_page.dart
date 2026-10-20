@@ -110,20 +110,14 @@ class _StatsDashboardPageState extends State<StatsDashboardPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Text(
-                          '量化阅读档案中心',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w800,
-                            color: scheme.onSurface,
-                            letterSpacing: -0.5,
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        const ArchiveCode('STATS-MATRIX-02', inverse: true, fontSize: 8.5),
-                      ],
+                    Text(
+                      '量化阅读档案中心',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                        color: scheme.onSurface,
+                        letterSpacing: -0.5,
+                      ),
                     ),
                     const SizedBox(height: 2),
                     Text(
@@ -752,21 +746,17 @@ class _StatsDashboardPageState extends State<StatsDashboardPage> {
     final scheme = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.only(top: 14),
+      alignment: Alignment.center,
       decoration: BoxDecoration(
         border: Border(top: BorderSide(color: scheme.outline, width: ArchivalTheme.hairlineThickness)),
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            'PROJECT ARCHIMEDES · QUANTIFIED MATRIX',
-            style: ArchivalTheme.codeStyle(fontSize: 8.5, color: scheme.onSurfaceVariant),
-          ),
-          Text(
-            'FORMATS: EPUB / PDF / MOBI / DOCX / MD',
-            style: ArchivalTheme.codeStyle(fontSize: 8.5, color: scheme.onSurfaceVariant),
-          ),
-        ],
+      child: Text(
+        'PROJECT ARCHIMEDES',
+        style: ArchivalTheme.codeStyle(
+          fontSize: 9.0,
+          color: scheme.onSurfaceVariant,
+          letterSpacing: 2.0,
+        ),
       ),
     );
   }
