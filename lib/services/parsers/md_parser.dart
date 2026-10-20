@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import '../../models/book.dart';
 
-/// Markdown Document Parser extracting chapters by top-level headers (# or ##).
+/// Markdown Document Parser extracting complete document structure and headings.
 class MdBookParser {
   static Future<Book> parse({
     required Uint8List bytes,
@@ -14,16 +14,19 @@ class MdBookParser {
     final chapters = <ChapterItem>[];
     final lines = text.split('\n');
 
-    String currentTitle = '引言';
+    String currentTitle = '正文';
     final currentBuffer = StringBuffer();
     int chapterIdx = 0;
     int totalWords = 0;
 
     for (final line in lines) {
       final trimmed = line.trim();
-      if (trimmed.startsWith('# ') || trimmed.startsWith('## ')) {
-        if (currentBuffer.isNotEmpty) {
-          final content = currentBuffer.toString().trim();
+      final isTopHeader = trimmed.startsWith('# ') || trimmed.startsWith('## ');
+
+      // Split into a new chapter only if the current buffer already has meaningful content (> 300 chars)
+      if (isTopHeader && currentBuffer.length > 300) {
+        final content = currentBuffer.toString().trim();
+        if (content.isNotEmpty) {
           totalWords += content.length;
           chapters.add(ChapterItem(
             index: chapterIdx++,
@@ -33,8 +36,12 @@ class MdBookParser {
           ));
           currentBuffer.clear();
         }
-        currentTitle = trimmed.replaceFirst(RegExp(r'^#+\s*'), '');
+        currentTitle = trimmed.replaceFirst(RegExp(r'^#+\s*'), '').trim();
+        currentBuffer.writeln(line);
       } else {
+        if (isTopHeader && currentBuffer.isEmpty) {
+          currentTitle = trimmed.replaceFirst(RegExp(r'^#+\s*'), '').trim();
+        }
         currentBuffer.writeln(line);
       }
     }
@@ -53,9 +60,9 @@ class MdBookParser {
     if (chapters.isEmpty) {
       chapters.add(ChapterItem(
         index: 0,
-        title: '正文',
+        title: title,
         wordCount: text.length,
-        content: text,
+        content: text.isEmpty ? '【空文档】' : text,
       ));
       totalWords = text.length;
     }
@@ -69,7 +76,7 @@ class MdBookParser {
     return Book(
       id: 'BK-${DateTime.now().millisecondsSinceEpoch.toString().substring(7)}',
       title: title,
-      author: 'Markdown 笔记',
+      author: 'Markdown 档案',
       format: 'MD',
       coverPath: '',
       totalWords: totalWords,

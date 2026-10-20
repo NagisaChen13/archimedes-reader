@@ -6,6 +6,7 @@ import 'parsers/txt_parser.dart';
 import 'parsers/epub_parser.dart';
 import 'parsers/docx_parser.dart';
 import 'parsers/md_parser.dart';
+import 'parsers/pdf_parser.dart';
 import 'storage_service.dart';
 
 /// Master Book Importer coordinating real system file selection and parser routing.
@@ -56,6 +57,8 @@ class BookImporter {
       book = await DocxBookParser.parse(bytes: bytes, fileName: fileName);
     } else if (ext == 'md') {
       book = await MdBookParser.parse(bytes: bytes, fileName: fileName);
+    } else if (ext == 'pdf') {
+      book = await PdfBookParser.parse(bytes: bytes, fileName: fileName);
     } else {
       // Generic fallback for PDF, MOBI, FB2, etc.
       final title = fileName.replaceAll(RegExp(r'\.[^.]+$'), '');

@@ -30,7 +30,7 @@ enum ReaderThemePreset {
   const ReaderThemePreset(this.label, this.backgroundColor, this.textColor, this.secondaryColor);
 }
 
-/// Master Reader Viewport integrating Moon+ gestures, acoustic engine, real physical pagination, and archival styling.
+/// Master Reader Viewport with Unified Multi-Chapter Pagination, Moon+ Gestures, and Archival Aesthetics.
 class ReaderView extends StatefulWidget {
   final Book book;
 
@@ -45,10 +45,10 @@ class _ReaderViewState extends State<ReaderView> {
 
   // Flattened list of chapters
   late List<ChapterItem> _allChapters;
-  int _currentChapterIndex = 0;
-  int _currentPageInChapter = 0;
-  List<PageSlice> _slices = [];
-  PageController _pageController = PageController();
+  final List<int> _chapterStartingSliceIndex = [];
+  List<PageSlice> _allSlices = [];
+  int _currentGlobalSliceIndex = 0;
+  final PageController _pageController = PageController();
 
   // Typography & Layout state
   double _fontSize = 18.0;
@@ -68,9 +68,6 @@ class _ReaderViewState extends State<ReaderView> {
   bool _rulerVisible = false;
   RulerStyle _rulerStyle = RulerStyle.yellowHighlight;
   BionicReadingMode _bionicMode = BionicReadingMode.disabled;
-  bool _autoScroll = false;
-  double _autoScrollSpeed = 30.0; // pixels per sec or seconds per page
-  Timer? _autoScrollTimer;
 
   // Sound & Acoustics
   late final AcousticEngine _acousticEngine;
@@ -89,7 +86,6 @@ class _ReaderViewState extends State<ReaderView> {
   @override
   void dispose() {
     _brightnessTimer?.cancel();
-    _autoScrollTimer?.cancel();
     _pageController.dispose();
     super.dispose();
   }
@@ -112,14 +108,11 @@ class _ReaderViewState extends State<ReaderView> {
     }
 
     _allChapters = list;
-    _currentChapterIndex = widget.book.currentChapterIndex.clamp(0, _allChapters.length - 1);
   }
 
-  void _paginateCurrentChapter(Size size) {
+  /// Paginates all chapters of the book into a unified continuous slice sequence
+  void _paginateAllChapters(Size size) {
     if (_allChapters.isEmpty) return;
-
-    final chapter = _allChapters[_currentChapterIndex];
-    final text = chapter.content ?? chapter.title;
 
     final textStyle = TextStyle(
       fontSize: _fontSize,
@@ -128,26 +121,54 @@ class _ReaderViewState extends State<ReaderView> {
       color: _currentTheme.textColor,
     );
 
-    final slices = PaginationEngine.paginateChapter(
-      chapterText: text,
-      chapterIndex: _currentChapterIndex,
-      chapterTitle: chapter.title,
-      viewportSize: size,
-      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20.0),
-      textStyle: textStyle,
-      indentTwoChars: _indentTwoChars,
-    );
+    final combinedSlices = <PageSlice>[];
+    _chapterStartingSliceIndex.clear();
+
+    for (int chIdx = 0; chIdx < _allChapters.length; chIdx++) {
+      final chapter = _allChapters[chIdx];
+      final text = chapter.content ?? chapter.title;
+
+      _chapterStartingSliceIndex.add(combinedSlices.length);
+
+      final slices = PaginationEngine.paginateChapter(
+        chapterText: text,
+        chapterIndex: chIdx,
+        chapterTitle: chapter.title,
+        viewportSize: size,
+        padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20.0),
+        textStyle: textStyle,
+        indentTwoChars: _indentTwoChars,
+      );
+
+      combinedSlices.addAll(slices);
+    }
+
+    // If completely empty, add 1 empty fallback slice
+    if (combinedSlices.isEmpty) {
+      combinedSlices.add(
+        PageSlice(
+          pageIndex: 0,
+          totalPagesInChapter: 1,
+          chapterIndex: 0,
+          chapterTitle: widget.book.title,
+          content: '【无内容】',
+          startCharOffset: 0,
+          endCharOffset: 0,
+        ),
+      );
+      _chapterStartingSliceIndex.add(0);
+    }
 
     setState(() {
-      _slices = slices;
-      if (_currentPageInChapter >= _slices.length) {
-        _currentPageInChapter = (_slices.length - 1).clamp(0, 9999);
+      _allSlices = combinedSlices;
+      if (_currentGlobalSliceIndex >= _allSlices.length) {
+        _currentGlobalSliceIndex = (_allSlices.length - 1).clamp(0, 99999);
       }
     });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_pageController.hasClients && _pageController.page?.round() != _currentPageInChapter) {
-        _pageController.jumpToPage(_currentPageInChapter);
+      if (_pageController.hasClients && _pageController.page?.round() != _currentGlobalSliceIndex) {
+        _pageController.jumpToPage(_currentGlobalSliceIndex);
       }
     });
   }
@@ -171,62 +192,44 @@ class _ReaderViewState extends State<ReaderView> {
   }
 
   void _nextPage() {
-    if (_currentPageInChapter < _slices.length - 1) {
+    if (_currentGlobalSliceIndex < _allSlices.length - 1) {
       _pageController.nextPage(
         duration: const Duration(milliseconds: 250),
         curve: Curves.easeOutCubic,
       );
       _acousticEngine.playPageTurnSound();
-    } else if (_currentChapterIndex < _allChapters.length - 1) {
-      // Advance to next chapter
-      _goToChapter(_currentChapterIndex + 1, startAtLastPage: false);
-      _acousticEngine.playPageTurnSound();
-      _showChapterToast('进入下一章: ${_allChapters[_currentChapterIndex].title}');
     } else {
-      _showChapterToast('已到达全书最后一页');
+      _showToast('已到达全书最后一页');
     }
   }
 
   void _prevPage() {
-    if (_currentPageInChapter > 0) {
+    if (_currentGlobalSliceIndex > 0) {
       _pageController.previousPage(
         duration: const Duration(milliseconds: 250),
         curve: Curves.easeOutCubic,
       );
       _acousticEngine.playPageTurnSound();
-    } else if (_currentChapterIndex > 0) {
-      // Revert to previous chapter's end
-      _goToChapter(_currentChapterIndex - 1, startAtLastPage: true);
-      _acousticEngine.playPageTurnSound();
-      _showChapterToast('回到上一章: ${_allChapters[_currentChapterIndex].title}');
     } else {
-      _showChapterToast('已到达全书开头');
+      _showToast('已到达全书开头');
     }
   }
 
-  void _goToChapter(int chapterIndex, {bool startAtLastPage = false}) {
-    if (chapterIndex < 0 || chapterIndex >= _allChapters.length) return;
-    setState(() {
-      _currentChapterIndex = chapterIndex;
-      _currentPageInChapter = 0;
-    });
-
-    if (_lastViewportSize != null) {
-      _paginateCurrentChapter(_lastViewportSize!);
-      if (startAtLastPage && _slices.isNotEmpty) {
-        setState(() {
-          _currentPageInChapter = _slices.length - 1;
-        });
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (_pageController.hasClients) {
-            _pageController.jumpToPage(_currentPageInChapter);
-          }
-        });
+  void _jumpToChapter(int chapterIndex) {
+    if (chapterIndex < 0 || chapterIndex >= _chapterStartingSliceIndex.length) return;
+    final targetSlice = _chapterStartingSliceIndex[chapterIndex];
+    if (targetSlice < _allSlices.length) {
+      setState(() {
+        _currentGlobalSliceIndex = targetSlice;
+      });
+      if (_pageController.hasClients) {
+        _pageController.jumpToPage(targetSlice);
       }
+      _acousticEngine.playPageTurnSound();
     }
   }
 
-  void _showChapterToast(String message) {
+  void _showToast(String message) {
     ScaffoldMessenger.of(context).removeCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -239,7 +242,6 @@ class _ReaderViewState extends State<ReaderView> {
   }
 
   void _handleLeftEdgeDrag(DragUpdateDetails details) {
-    // Sliding vertically adjusts brightness
     setState(() {
       _brightness = (_brightness - details.delta.dy / 250.0).clamp(0.15, 1.0);
       _showBrightnessOverlay = true;
@@ -255,13 +257,10 @@ class _ReaderViewState extends State<ReaderView> {
 
   @override
   Widget build(BuildContext context) {
-    final currentChapter = _allChapters.isNotEmpty ? _allChapters[_currentChapterIndex] : null;
-    final chapterTitle = currentChapter?.title ?? widget.book.title;
-    final totalChapters = _allChapters.length;
-    final totalPagesInChapter = _slices.isNotEmpty ? _slices.length : 1;
-    final overallProgress = totalChapters > 0
-        ? (_currentChapterIndex + (_currentPageInChapter + 1) / totalPagesInChapter) / totalChapters
-        : 0.0;
+    final currentSlice = _allSlices.isNotEmpty ? _allSlices[_currentGlobalSliceIndex] : null;
+    final chapterTitle = currentSlice?.chapterTitle ?? widget.book.title;
+    final totalSlices = _allSlices.isNotEmpty ? _allSlices.length : 1;
+    final overallProgress = totalSlices > 0 ? (_currentGlobalSliceIndex + 1) / totalSlices : 0.0;
 
     return Scaffold(
       key: _scaffoldKey,
@@ -276,7 +275,7 @@ class _ReaderViewState extends State<ReaderView> {
                 (_lastViewportSize!.height - currentSize.height).abs() > 2) {
               _lastViewportSize = currentSize;
               WidgetsBinding.instance.addPostFrameCallback((_) {
-                _paginateCurrentChapter(currentSize);
+                _paginateAllChapters(currentSize);
               });
             }
 
@@ -288,7 +287,7 @@ class _ReaderViewState extends State<ReaderView> {
                   child: Column(
                     children: [
                       Expanded(
-                        child: _slices.isEmpty
+                        child: _allSlices.isEmpty
                             ? Center(
                                 child: Text(
                                   '正在编排物理页码...',
@@ -297,16 +296,16 @@ class _ReaderViewState extends State<ReaderView> {
                               )
                             : PageView.builder(
                                 controller: _pageController,
-                                itemCount: _slices.length,
+                                itemCount: _allSlices.length,
                                 physics: const BouncingScrollPhysics(),
                                 onPageChanged: (index) {
                                   setState(() {
-                                    _currentPageInChapter = index;
+                                    _currentGlobalSliceIndex = index;
                                   });
                                   _acousticEngine.playPageTurnSound();
                                 },
                                 itemBuilder: (context, index) {
-                                  final slice = _slices[index];
+                                  final slice = _allSlices[index];
                                   return _buildPageSurface(slice);
                                 },
                               ),
@@ -315,7 +314,9 @@ class _ReaderViewState extends State<ReaderView> {
                       MiniStatusBar(
                         chapterTitle: chapterTitle,
                         progressPercent: overallProgress.clamp(0.0, 1.0),
-                        currentTime: '${_currentPageInChapter + 1}/$totalPagesInChapter 页',
+                        currentTime: currentSlice != null
+                            ? '${currentSlice.pageIndex + 1}/${currentSlice.totalPagesInChapter} 页 (全书 ${indexString()})'
+                            : '${_currentGlobalSliceIndex + 1}/$totalSlices 页',
                       ),
                     ],
                   ),
@@ -392,7 +393,7 @@ class _ReaderViewState extends State<ReaderView> {
                     bottom: 0,
                     left: 0,
                     right: 0,
-                    child: _buildBottomHud(context, totalPagesInChapter),
+                    child: _buildBottomHud(context, totalSlices),
                   ),
               ],
             );
@@ -401,6 +402,8 @@ class _ReaderViewState extends State<ReaderView> {
       ),
     );
   }
+
+  String indexString() => '${_currentGlobalSliceIndex + 1}/${_allSlices.length}';
 
   Widget _buildPageSurface(PageSlice slice) {
     final baseTextStyle = TextStyle(
@@ -430,6 +433,8 @@ class _ReaderViewState extends State<ReaderView> {
   // ==========================================
 
   Widget _buildTopHud(BuildContext context) {
+    final currentSlice = _allSlices.isNotEmpty ? _allSlices[_currentGlobalSliceIndex] : null;
+
     return Container(
       height: 56.0,
       decoration: BoxDecoration(
@@ -468,7 +473,7 @@ class _ReaderViewState extends State<ReaderView> {
                   style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: _currentTheme.textColor),
                 ),
                 Text(
-                  _allChapters.isNotEmpty ? _allChapters[_currentChapterIndex].title : '',
+                  currentSlice?.chapterTitle ?? '',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 11, color: _currentTheme.secondaryColor),
@@ -510,7 +515,7 @@ class _ReaderViewState extends State<ReaderView> {
             icon: Icon(Icons.auto_awesome, color: _currentTheme.textColor),
             tooltip: 'AI 阅读助手',
             onPressed: () {
-              final contextSnippet = _slices.isNotEmpty ? _slices[_currentPageInChapter].content : '';
+              final contextSnippet = _allSlices.isNotEmpty ? _allSlices[_currentGlobalSliceIndex].content : '';
               Navigator.push(
                 context,
                 MaterialPageRoute(
@@ -527,7 +532,7 @@ class _ReaderViewState extends State<ReaderView> {
     );
   }
 
-  Widget _buildBottomHud(BuildContext context, int totalPagesInChapter) {
+  Widget _buildBottomHud(BuildContext context, int totalSlices) {
     return Container(
       decoration: BoxDecoration(
         color: _currentTheme.backgroundColor.withValues(alpha: 0.96),
@@ -544,21 +549,21 @@ class _ReaderViewState extends State<ReaderView> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Slider for progress within chapter
+          // Slider for progress within the whole book
           Row(
             children: [
-              Text('${_currentPageInChapter + 1}', style: ArchivalTheme.codeStyle(color: _currentTheme.textColor)),
+              Text('${_currentGlobalSliceIndex + 1}', style: ArchivalTheme.codeStyle(color: _currentTheme.textColor)),
               Expanded(
                 child: Slider(
-                  value: (_currentPageInChapter + 1).toDouble().clamp(1.0, totalPagesInChapter.toDouble()),
+                  value: (_currentGlobalSliceIndex + 1).toDouble().clamp(1.0, totalSlices.toDouble()),
                   min: 1.0,
-                  max: totalPagesInChapter.toDouble() > 1 ? totalPagesInChapter.toDouble() : 1.0,
+                  max: totalSlices > 1 ? totalSlices.toDouble() : 1.0,
                   activeColor: _currentTheme.textColor,
                   inactiveColor: _currentTheme.secondaryColor.withValues(alpha: 0.3),
                   onChanged: (val) {
                     final target = val.round() - 1;
-                    if (target != _currentPageInChapter) {
-                      setState(() => _currentPageInChapter = target);
+                    if (target != _currentGlobalSliceIndex) {
+                      setState(() => _currentGlobalSliceIndex = target);
                       if (_pageController.hasClients) {
                         _pageController.jumpToPage(target);
                       }
@@ -566,7 +571,7 @@ class _ReaderViewState extends State<ReaderView> {
                   },
                 ),
               ),
-              Text('$totalPagesInChapter', style: ArchivalTheme.codeStyle(color: _currentTheme.textColor)),
+              Text('$totalSlices', style: ArchivalTheme.codeStyle(color: _currentTheme.textColor)),
             ],
           ),
           // Tool button bar
@@ -586,7 +591,7 @@ class _ReaderViewState extends State<ReaderView> {
                     _fontSize = _fontSize >= 26 ? 14 : _fontSize + 2;
                   });
                   if (_lastViewportSize != null) {
-                    _paginateCurrentChapter(_lastViewportSize!);
+                    _paginateAllChapters(_lastViewportSize!);
                   }
                 },
               ),
@@ -665,6 +670,9 @@ class _ReaderViewState extends State<ReaderView> {
   // ==========================================
 
   Widget _buildTocDrawer(BuildContext context) {
+    final currentSlice = _allSlices.isNotEmpty ? _allSlices[_currentGlobalSliceIndex] : null;
+    final currentChIdx = currentSlice?.chapterIndex ?? 0;
+
     return Drawer(
       backgroundColor: _currentTheme.backgroundColor,
       child: SafeArea(
@@ -690,7 +698,7 @@ class _ReaderViewState extends State<ReaderView> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '${widget.book.author} · 共 ${_allChapters.length} 章节',
+                    '${widget.book.author} · 共 ${_allChapters.length} 章节 · 全书 ${_allSlices.length} 页',
                     style: TextStyle(fontSize: 12, color: _currentTheme.secondaryColor),
                   ),
                 ],
@@ -709,7 +717,7 @@ class _ReaderViewState extends State<ReaderView> {
                 ),
                 itemBuilder: (context, index) {
                   final chapter = _allChapters[index];
-                  final isCurrent = index == _currentChapterIndex;
+                  final isCurrent = index == currentChIdx;
                   return ListTile(
                     selected: isCurrent,
                     selectedTileColor: _currentTheme.secondaryColor.withValues(alpha: 0.12),
@@ -728,7 +736,7 @@ class _ReaderViewState extends State<ReaderView> {
                     trailing: isCurrent ? Icon(Icons.bookmark, size: 18, color: _currentTheme.textColor) : null,
                     onTap: () {
                       Navigator.pop(context); // close drawer
-                      _goToChapter(index);
+                      _jumpToChapter(index);
                     },
                   );
                 },
@@ -824,7 +832,7 @@ class _ReaderViewState extends State<ReaderView> {
                     if (_fontSize > 12) {
                       setState(() => _fontSize -= 1);
                       setModalState(() {});
-                      if (_lastViewportSize != null) _paginateCurrentChapter(_lastViewportSize!);
+                      if (_lastViewportSize != null) _paginateAllChapters(_lastViewportSize!);
                     }
                   },
                 ),
@@ -835,7 +843,7 @@ class _ReaderViewState extends State<ReaderView> {
                     if (_fontSize < 36) {
                       setState(() => _fontSize += 1);
                       setModalState(() {});
-                      if (_lastViewportSize != null) _paginateCurrentChapter(_lastViewportSize!);
+                      if (_lastViewportSize != null) _paginateAllChapters(_lastViewportSize!);
                     }
                   },
                 ),
@@ -851,7 +859,7 @@ class _ReaderViewState extends State<ReaderView> {
           onChanged: (v) {
             setState(() => _fontSize = v);
             setModalState(() {});
-            if (_lastViewportSize != null) _paginateCurrentChapter(_lastViewportSize!);
+            if (_lastViewportSize != null) _paginateAllChapters(_lastViewportSize!);
           },
         ),
         const SizedBox(height: 12),
@@ -870,7 +878,7 @@ class _ReaderViewState extends State<ReaderView> {
           onChanged: (v) {
             setState(() => _lineHeight = v);
             setModalState(() {});
-            if (_lastViewportSize != null) _paginateCurrentChapter(_lastViewportSize!);
+            if (_lastViewportSize != null) _paginateAllChapters(_lastViewportSize!);
           },
         ),
         const SizedBox(height: 12),
@@ -881,7 +889,7 @@ class _ReaderViewState extends State<ReaderView> {
           onChanged: (val) {
             setState(() => _indentTwoChars = val);
             setModalState(() {});
-            if (_lastViewportSize != null) _paginateCurrentChapter(_lastViewportSize!);
+            if (_lastViewportSize != null) _paginateAllChapters(_lastViewportSize!);
           },
         ),
         SwitchListTile(
@@ -912,7 +920,7 @@ class _ReaderViewState extends State<ReaderView> {
               onTap: () {
                 setState(() => _currentTheme = preset);
                 setModalState(() {});
-                if (_lastViewportSize != null) _paginateCurrentChapter(_lastViewportSize!);
+                if (_lastViewportSize != null) _paginateAllChapters(_lastViewportSize!);
               },
               child: Container(
                 width: 140,
@@ -1083,7 +1091,7 @@ class _ReaderViewState extends State<ReaderView> {
                     if (_ttsService.isPlaying) {
                       _ttsService.stop();
                     } else {
-                      final text = _slices.isNotEmpty ? _slices[_currentPageInChapter].content : '';
+                      final text = _allSlices.isNotEmpty ? _allSlices[_currentGlobalSliceIndex].content : '';
                       _ttsService.startSpeaking(text: text, role: TtsRole.narrator);
                     }
                   });

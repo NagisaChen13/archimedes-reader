@@ -177,38 +177,40 @@ class _MasterHomeScreenState extends State<MasterHomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: ArchiveMasthead(
-        title: _getTabTitle(_currentTabIndex),
-        code: _getTabCode(_currentTabIndex),
-        actions: [
-          if (_currentTabIndex == 0) ...[
-            IconButton(
-              icon: const Icon(Icons.add_circle_outline),
-              tooltip: '导入外部书籍 (TXT/EPUB/PDF/DOCX/MD...)',
-              onPressed: _importBook,
+      appBar: _currentTabIndex == 1
+          ? null
+          : ArchiveMasthead(
+              title: _getTabTitle(_currentTabIndex),
+              code: _getTabCode(_currentTabIndex),
+              actions: [
+                if (_currentTabIndex == 0) ...[
+                  IconButton(
+                    icon: const Icon(Icons.add_circle_outline),
+                    tooltip: '导入外部书籍 (TXT/EPUB/PDF/DOCX/MD...)',
+                    onPressed: _importBook,
+                  ),
+                  IconButton(
+                    icon: Icon(_isCarouselMode ? Icons.view_agenda_outlined : Icons.view_carousel_outlined),
+                    tooltip: _isCarouselMode ? '切换列表视图' : '切换立体轮播',
+                    onPressed: () => setState(() => _isCarouselMode = !_isCarouselMode),
+                  ),
+                ],
+                IconButton(
+                  icon: Icon(Theme.of(context).brightness == Brightness.dark
+                      ? Icons.light_mode_outlined
+                      : Icons.dark_mode_outlined),
+                  tooltip: '切换昼夜暗室',
+                  onPressed: widget.onToggleTheme,
+                ),
+              ],
             ),
-            IconButton(
-              icon: Icon(_isCarouselMode ? Icons.view_agenda_outlined : Icons.view_carousel_outlined),
-              tooltip: _isCarouselMode ? '切换列表视图' : '切换立体轮播',
-              onPressed: () => setState(() => _isCarouselMode = !_isCarouselMode),
-            ),
-          ],
-          IconButton(
-            icon: Icon(Theme.of(context).brightness == Brightness.dark
-                ? Icons.light_mode_outlined
-                : Icons.dark_mode_outlined),
-            tooltip: '切换昼夜暗室',
-            onPressed: widget.onToggleTheme,
-          ),
-        ],
-      ),
       body: Stack(
         children: [
           IndexedStack(
             index: _currentTabIndex,
             children: [
               _buildBookshelfView(context),
-              const StatsDashboardPage(),
+              StatsDashboardPage(onToggleTheme: widget.onToggleTheme),
               _buildSettingsView(context),
             ],
           ),
