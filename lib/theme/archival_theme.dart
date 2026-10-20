@@ -36,12 +36,13 @@ abstract final class ArchivalTheme {
     Color? color,
     double fontSize = 10.0,
     FontWeight fontWeight = FontWeight.w600,
+    double letterSpacing = 1.1,
   }) {
     return TextStyle(
       fontFamily: 'monospace',
       fontSize: fontSize,
       fontWeight: fontWeight,
-      letterSpacing: 1.1,
+      letterSpacing: letterSpacing,
       color: color,
     );
   }
