@@ -176,14 +176,16 @@ class _MarkdownReaderViewState extends State<MarkdownReaderView> {
     final now = DateTime.now();
     final durationSeconds = now.difference(_sessionStart).inSeconds;
 
-    widget.book.currentProgress = _scrollProgress;
-    widget.book.lastReadTime = now;
+    final updatedBook = widget.book.copyWith(
+      currentProgress: _scrollProgress,
+      lastReadTime: now,
+    );
 
     // Save book progress
     final library = StorageService().getBooks();
     final idx = library.indexWhere((b) => b.id == widget.book.id);
     if (idx != null && idx >= 0) {
-      library[idx] = widget.book;
+      library[idx] = updatedBook;
       StorageService().saveBooks(library);
     }
 

@@ -34,6 +34,38 @@ class Book {
 
   bool get isSeries => volumes.length > 1;
 
+  Book copyWith({
+    String? id,
+    String? title,
+    String? author,
+    String? format,
+    String? coverPath,
+    String? filePath,
+    int? totalWords,
+    double? currentProgress,
+    int? currentChapterIndex,
+    int? status,
+    List<BookVolume>? volumes,
+    List<String>? illustrations,
+    DateTime? lastReadTime,
+  }) {
+    return Book(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      author: author ?? this.author,
+      format: format ?? this.format,
+      coverPath: coverPath ?? this.coverPath,
+      filePath: filePath ?? this.filePath,
+      totalWords: totalWords ?? this.totalWords,
+      currentProgress: currentProgress ?? this.currentProgress,
+      currentChapterIndex: currentChapterIndex ?? this.currentChapterIndex,
+      status: status ?? this.status,
+      volumes: volumes ?? this.volumes,
+      illustrations: illustrations ?? this.illustrations,
+      lastReadTime: lastReadTime ?? this.lastReadTime,
+    );
+  }
+
   Map<String, dynamic> toMap() {
     return {
       'id': id,
