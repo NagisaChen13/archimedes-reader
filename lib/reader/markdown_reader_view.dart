@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -201,7 +202,7 @@ class _MarkdownReaderViewState extends State<MarkdownReaderView> {
         pagesRead: math.max(1, (durationSeconds / 30).round()),
         wordsRead: (durationSeconds * 5),
       );
-      StorageService().recordSession(session);
+      StorageService().logSession(session);
     }
   }
 
